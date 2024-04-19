@@ -1,6 +1,6 @@
 package fr.maif.izanami.api
 
-import fr.maif.izanami.api.BaseAPISpec.{TestFeature, TestProject, TestSituationBuilder, TestTenant, TestUser, getProjectsForTenant, shouldCleanUpWasmServer}
+import fr.maif.izanami.api.BaseAPISpec.{TestFeature, TestProject, TestSituationBuilder, TestTenant, TestUser}
 import play.api.http.Status.{ACCEPTED, FORBIDDEN, NOT_FOUND, NO_CONTENT, OK}
 import play.api.libs.json.{JsNull, JsObject}
 

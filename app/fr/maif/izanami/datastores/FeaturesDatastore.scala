@@ -5,7 +5,7 @@ import fr.maif.izanami.env.Env
 import fr.maif.izanami.env.PostgresqlErrors.{FOREIGN_KEY_VIOLATION, NOT_NULL_VIOLATION, RELATION_DOES_NOT_EXISTS, UNIQUE_VIOLATION}
 import fr.maif.izanami.env.pgimplicits.EnhancedRow
 import fr.maif.izanami.errors._
-import fr.maif.izanami.events.{EventService, FeatureCreated, FeatureDeleted, FeatureUpdated}
+import fr.maif.izanami.events.{EventService, SourceFeatureCreated, SourceFeatureDeleted, SourceFeatureUpdated}
 import fr.maif.izanami.models.Feature.{activationConditionRead, activationConditionWrite, legacyActivationConditionRead, legacyCompatibleConditionWrites}
 import fr.maif.izanami.models._
 import fr.maif.izanami.utils.Datastore
@@ -208,7 +208,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                   case Some((id, name, project, enabled)) =>
                     env.eventService.emitEvent(
                       channel=tenant,
-                      event=FeatureUpdated(id=id, project=project, tenant=tenant)
+                      event=SourceFeatureUpdated(id=id, project=project, tenant=tenant)
                     )
                   case None                               => Future.successful(())
                 }
@@ -231,7 +231,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                   case Some((id, name, project, enabled)) =>
                     env.eventService.emitEvent(
                       channel=tenant,
-                      event=FeatureUpdated(id=id,
+                      event=SourceFeatureUpdated(id=id,
                       project=project,
                       tenant=tenant)
                     )(conn)
@@ -289,7 +289,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                   case Some((id, name, project, enabled)) =>
                     env.eventService.emitEvent(
                       channel = tenant,
-                      event = FeatureDeleted(id = id, project = project, tenant = tenant)
+                      event = SourceFeatureDeleted(id = id, project = project, tenant = tenant)
                     )(conn)
                   case None                               => Future.successful(())
                 }
@@ -1006,7 +1006,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
             .sequence(ids.map { case (id, project) =>
               env.eventService.emitEvent(
                 channel = tenant,
-                event = FeatureCreated(id = id, project = project, tenant = tenant)
+                event = SourceFeatureCreated(id = id, project = project, tenant = tenant)
               )(conn)
             })
             .map(_ => Right(()))
@@ -1295,7 +1295,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
         case Right(id)   =>
           env.eventService.emitEvent(
             channel = tenant,
-            event = FeatureCreated(id = id, project = project, tenant = tenant)
+            event = SourceFeatureCreated(id = id, project = project, tenant = tenant)
           )(conn)
           .map(_ =>
             Right(id)
@@ -1402,7 +1402,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
             case r @ Right(id) =>
               env.eventService.emitEvent(
                 channel=tenant,
-                event=FeatureUpdated(id=id, project=feature.project, tenant=tenant)
+                event=SourceFeatureUpdated(id=id, project=feature.project, tenant=tenant)
               )(conn)
               .map(_ => r)
           }
@@ -1464,7 +1464,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
           case Right((id, project)) =>
             env.eventService.emitEvent(
               channel = tenant,
-              event = FeatureDeleted(id = id, project = project, tenant = tenant)
+              event = SourceFeatureDeleted(id = id, project = project, tenant = tenant)
             )(conn)
             .map(_ =>
               Right(id)

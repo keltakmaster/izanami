@@ -2,6 +2,7 @@ import { format } from "date-fns";
 import {
   Configuration,
   IzanamiV1ImportRequest,
+  LightWebhook,
   Mailer,
   MailerConfiguration,
   ProjectInCreationType,
@@ -15,9 +16,11 @@ import {
   TKey,
   TLevel,
   TRights,
+  TSingleRightForTenantUser,
   TTenantRight,
   TUser,
   TWasmConfig,
+  Webhook,
 } from "./types";
 import { isArray } from "lodash";
 import toast from "react-hot-toast";
@@ -27,6 +30,10 @@ export enum MutationNames {
   TENANTS = "TENANTS",
   USERS = "USER",
   CONFIGURATION = "CONFIGURATION",
+}
+
+export function webhookQueryKey(tenant: string): string {
+  return `${tenant}-webhooks`;
 }
 
 export function tenantScriptKey(tenant: string): string {
@@ -92,6 +99,10 @@ export function projectUserQueryKey(tenant: string, project: string) {
   return `USERS-${tenant}-${project}`;
 }
 
+export function webhookUserQueryKey(tenant: string, webhook: string) {
+  return `USERS-${tenant}-${webhook}`;
+}
+
 export function queryTenantUsers(tenant: string): Promise<
   {
     username: string;
@@ -126,18 +137,19 @@ export function searchFeatures(
   );
 }
 
+export function queryWebhookUsers(
+  tenant: string,
+  webhook: string
+): Promise<TSingleRightForTenantUser[]> {
+  return handleFetchJsonResponse(
+    fetch(`/api/admin/tenants/${tenant}/webhooks/${webhook}/users`)
+  );
+}
+
 export function queryProjectUsers(
   tenant: string,
   project: string
-): Promise<
-  {
-    username: string;
-    email: string;
-    admin: boolean;
-    userType: "INTERNAL" | "OIDC" | "OTOROSHI";
-    right: TLevel;
-  }[]
-> {
+): Promise<TSingleRightForTenantUser[]> {
   return handleFetchJsonResponse(
     fetch(`/api/admin/tenants/${tenant}/projects/${project}/users`)
   );
@@ -715,6 +727,26 @@ export function updateUserRightsForProject(
   );
 }
 
+export function updateUserRightsForWebhook(
+  username: string,
+  tenant: string,
+  webhook: string,
+  right?: TLevel
+): Promise<undefined> {
+  return handleFetchWithoutResponse(
+    fetch(
+      `/api/admin/tenants/${tenant}/webhook/${webhook}/users/${username}/rights`,
+      {
+        method: "PUT",
+        body: right ? JSON.stringify({ level: right }) : "{}",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    )
+  );
+}
+
 export function inviteUsersToProject(
   tenant: string,
   project: string,
@@ -946,8 +978,82 @@ export function createInvitation(
   });
 }
 
+export function fetchWebhooks(tenant: string): Promise<Webhook[]> {
+  return handleFetchJsonResponse(
+    fetch(`/api/admin/tenants/${tenant}/webhooks`)
+  );
+}
+
+export function deleteWebhook(tenant: string, id: string): Promise<undefined> {
+  return handleFetchWithoutResponse(
+    fetch(`/api/admin/tenants/${tenant}/webhooks/${id}`, {
+      method: "DELETE",
+    })
+  );
+}
+
+export function updateWebhook(
+  tenant: string,
+  id: string,
+  webhook: LightWebhook
+): Promise<void> {
+  return handleFetchWithoutResponse(
+    fetch(`/api/admin/tenants/${tenant}/webhooks/${id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(webhook),
+    })
+  );
+}
+
+export function createWebhook(
+  tenant: string,
+  webhook: LightWebhook
+): Promise<undefined> {
+  return handleFetchWithoutResponse(
+    fetch(`/api/admin/tenants/${tenant}/webhooks`, {
+      method: "POST",
+      body: JSON.stringify(webhook),
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })
+  );
+}
+
+export function fetchWebhookUsers(
+  tenant: string,
+  webhook: string
+): Promise<TSingleRightForTenantUser[]> {
+  return handleFetchJsonResponse(
+    fetch(`/api/admin/tenants/${tenant}/webhooks/${webhook}/users`)
+  );
+}
+
 export function usersQuery(): Promise<TUser[]> {
   return handleFetchJsonResponse(fetch(`/api/admin/users`));
+}
+
+export function updateWebhookRightsFor(
+  tenant: string,
+  webhook: string,
+  user: string,
+  right?: TLevel
+): Promise<void> {
+  return handleFetchWithoutResponse(
+    fetch(
+      `/api/admin/tenants/${tenant}/webhooks/${webhook}/users/${user}/rights`,
+      {
+        method: "PUT",
+        body: right ? JSON.stringify({ level: right }) : "{}",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    )
+  );
 }
 
 export function importIzanamiV1Data(

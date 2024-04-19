@@ -12,6 +12,7 @@ import akka.stream.scaladsl.{FileIO, Keep, Sink, Source}
 import akka.util.Timeout
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock
+import com.github.tomakehurst.wiremock.client.WireMock.aResponse
 import com.github.tomakehurst.wiremock.core.{Container, WireMockConfiguration}
 import com.github.tomakehurst.wiremock.http.{HttpHeaders, Request}
 import fr.maif.izanami.api.BaseAPISpec.{
@@ -21,6 +22,7 @@ import fr.maif.izanami.api.BaseAPISpec.{
   shouldCleanUpEvents,
   shouldCleanUpMails,
   shouldCleanUpWasmServer,
+  webhookServers,
   ws
 }
 import fr.maif.izanami.utils.{WasmManagerClient, WiremockResponseDefinitionTransformer}
@@ -47,6 +49,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.{Future, Promise}
 import scala.concurrent.duration.DurationInt
 import scala.util.Try
+
+case class StubServer(server: WireMockServer, extension: WiremockResponseDefinitionTransformer)
 
 class BaseAPISpec
     extends PlaySpec
@@ -143,6 +147,16 @@ class BaseAPISpec
       Option(mailgunMockServer).filter(_.isRunning).foreach(_.resetAll())
       Option(mailgunExtension).foreach(_.reset())
     }
+
+    if (webhookServers.nonEmpty) {
+      webhookServers.foreach {
+        case (port, StubServer(server, extension)) => {
+          println(s"Stopping wiremock on port $port")
+          server.stop()
+        }
+      }
+      webhookServers.clear()
+    }
   }
 
   override def afterAll(): Unit = {
@@ -169,6 +183,32 @@ object BaseAPISpec extends DefaultAwaitTimeout {
   var shouldCleanUpEvents               = true
   var eventKillSwitch: UniqueKillSwitch = null
 
+  val webhookServers: scala.collection.mutable.Map[Int, StubServer] = scala.collection.mutable.Map()
+
+  def setupWebhookServer(port: Int, responseCode: Int = OK, path: String = "/"): Unit = {
+    webhookServers.get(port) match {
+      case Some(StubServer(server, _)) => {
+        server.resetMappings()
+        server.stubFor(
+          WireMock.post(path).willReturn(aResponse().withStatus(responseCode))
+        )
+      }
+      case None                        => {
+        val extension = new WiremockResponseDefinitionTransformer()
+        val server    = new WireMockServer(WireMockConfiguration.options().extensions(extension).port(port))
+        server.stubFor(
+          WireMock.post(path).willReturn(aResponse().withStatus(responseCode))
+        )
+        webhookServers.put(port, StubServer(server = server, extension = extension))
+        server.start()
+      }
+    }
+  }
+
+  def getWebhookServerRequests(port: Int): mutable.Seq[(Request, HttpHeaders)] = {
+    webhookServers(port).extension.requests
+  }
+
   def cleanUpDB(): Unit = {
     classOf[org.postgresql.Driver]
     val con_str = "jdbc:postgresql://localhost:5432/postgres?user=postgres&password=postgres"
@@ -176,6 +216,21 @@ object BaseAPISpec extends DefaultAwaitTimeout {
     try {
       val stm    = conn.createStatement()
       val result = stm.executeQuery("SELECT schema_name FROM information_schema.schemata")
+      println("Killing connections...")
+      conn
+        .createStatement()
+        .execute(s"""
+           |SELECT
+           |    pg_terminate_backend(pid)
+           |FROM
+           |    pg_stat_activity
+           |WHERE
+           |    -- don't kill my own connection!
+           |    pid <> pg_backend_pid()
+           |    AND backend_type = 'client backend'
+           |    AND query LIKE 'LISTEN%'
+           |    AND query <> 'LISTEN "izanami"'
+           |""".stripMargin)
 
       while (result.next()) {
         val schema = result.getString(1)
@@ -188,6 +243,7 @@ object BaseAPISpec extends DefaultAwaitTimeout {
           conn.createStatement().execute("TRUNCATE TABLE izanami.sessions CASCADE")
           conn.createStatement().execute("TRUNCATE TABLE izanami.pending_imports CASCADE")
           conn.createStatement().execute("TRUNCATE TABLE izanami.key_tenant CASCADE")
+          conn.createStatement().execute("TRUNCATE TABLE izanami.global_events CASCADE")
           conn.createStatement().execute("UPDATE izanami.mailers SET configuration='{}'::JSONB")
           conn
             .createStatement()
@@ -211,17 +267,10 @@ object BaseAPISpec extends DefaultAwaitTimeout {
   def enabledFeatureBase64  = scala.io.Source.fromResource("enabled_script_feature_base64").getLines().mkString("")
   def disabledFeatureBase64 = scala.io.Source.fromResource("disabled_script_feature_base64").getLines().mkString("")
 
-  def getProjectsForTenant(tenant: String): (Option[JsValue], Int) = {
-
-    val response = await(ws.url(s"${ADMIN_BASE_URL}/tenants/${tenant}/projects").get())
-
-    (
-      response.status match {
-        case OK => Some(response.json)
-        case _  => Option.empty
-      },
-      response.status
-    )
+  def createWebhook(tenant: String, webhook: TestWebhook, cookies: Seq[WSCookie] = Seq()) = {
+    ws.url(s"${ADMIN_BASE_URL}/tenants/${tenant}/webhooks")
+      .withCookies(cookies: _*)
+      .post(webhook.toJson)
   }
 
   def createFeature(
@@ -1061,16 +1110,24 @@ object BaseAPISpec extends DefaultAwaitTimeout {
     )
   }
 
+  case class TestWebhookRight(name: String, level: String = "Read") {
+    def json: JsObject = Json.obj(
+      "level" -> level
+    )
+  }
+
   case class TestTenantRight(
       name: String,
       level: String = "Read",
       projects: Map[String, TestProjectRight] = Map(),
-      keys: Map[String, TestKeyRight] = Map()
+      keys: Map[String, TestKeyRight] = Map(),
+      webhooks: Map[String, TestWebhookRight] = Map()
   ) {
     def json: JsObject = Json.obj(
       "level"    -> level,
       "projects" -> projects.view.mapValues(_.json),
-      "keys"     -> keys.view.mapValues(_.json)
+      "keys"     -> keys.view.mapValues(_.json),
+      "webhooks" -> webhooks.view.mapValues(_.json)
     )
 
     def addProjectRight(project: String, level: String): TestTenantRight = {
@@ -1079,6 +1136,10 @@ object BaseAPISpec extends DefaultAwaitTimeout {
 
     def addKeyRight(key: String, level: String): TestTenantRight = {
       copy(keys = keys + (key -> TestKeyRight(key, level)))
+    }
+
+    def addWebhookRight(webhook: String, level: String): TestTenantRight = {
+      copy(webhooks = webhooks + (webhook -> TestWebhookRight(webhook, level)))
     }
   }
 
@@ -1244,10 +1305,15 @@ object BaseAPISpec extends DefaultAwaitTimeout {
       tags: Set[TestTag] = Set(),
       apiKeys: Set[TestApiKey] = Set(),
       allRightKeys: Set[String] = Set(),
-      contexts: Set[TestFeatureContext] = Set()
+      contexts: Set[TestFeatureContext] = Set(),
+      webhooks: Set[TestWebhookByName] = Set()
   ) {
     def withProjects(projects: TestProject*): TestTenant = {
       copy(projects = this.projects ++ projects)
+    }
+
+    def withWebhooks(webhooks: TestWebhookByName*): TestTenant = {
+      copy(webhooks = this.webhooks ++ webhooks)
     }
 
     def withProjectNames(projects: String*): TestTenant = {
@@ -1312,13 +1378,60 @@ object BaseAPISpec extends DefaultAwaitTimeout {
     )
   }
 
+  case class TestWebhook(
+      name: String,
+      url: String,
+      features: Set[String] = Set(),
+      projects: Set[String] = Set(),
+      headers: Map[String, String] = Map(),
+      description: String = "",
+      user: String = "",
+      context: String = "",
+      enabled: Boolean = true,
+      bodyTemplate: Option[String] = None
+  ) {
+    def toJson: JsObject = {
+      Json.obj(
+        "name"         -> name,
+        "url"          -> url,
+        "features"     -> features,
+        "projects"     -> projects,
+        "headers"      -> headers,
+        "description"  -> description,
+        "user"         -> user,
+        "enabled"      -> enabled,
+        "context"      -> context,
+        "bodyTemplate" -> bodyTemplate
+      )
+    }
+  }
+
+  type TenantName      = String
+  type ProjectName     = String
+  type FeatureName     = String
+  type FeatureIdByName = (TenantName, ProjectName, FeatureName)
+  type ProjectIdByName = (TenantName, ProjectName)
+  case class TestWebhookByName(
+      name: String,
+      url: String,
+      features: Set[FeatureIdByName] = Set(),
+      projects: Set[ProjectIdByName] = Set(),
+      headers: Map[String, String] = Map(),
+      description: String = "",
+      user: String = "",
+      context: String = "",
+      enabled: Boolean = true,
+      bodyTemplate: Option[String] = None
+  )
+
   case class TestSituation(
       keys: Map[String, TestSituationKey] = Map(),
       cookies: Seq[WSCookie] = Seq(),
       features: Map[String, Map[String, Map[String, String]]] = Map(),
       projects: Map[String, Map[String, String]] = Map(),
       tags: Map[String, Map[String, String]] = Map(),
-      scripts: Map[String, String] = Map()
+      scripts: Map[String, String] = Map(),
+      webhooks: Map[String, Map[String, String]] = Map()
   ) {
 
     def shutdownEventSources(tenant: String) = {
@@ -1372,6 +1485,107 @@ object BaseAPISpec extends DefaultAwaitTimeout {
         }))(Keep.both)
         .run()
       eventKillSwitch = killswitch
+    }
+
+    def listWebhook(tenant: String) = {
+      val response = await(
+        ws.url(s"${ADMIN_BASE_URL}/tenants/${tenant}/webhooks")
+          .withCookies(cookies: _*)
+          .get()
+      )
+
+      RequestResult(
+        json = Try {
+          response.json
+        },
+        status = response.status
+      )
+    }
+
+    def updateWebhook(tenant: String, id: String, transformer: JsObject => JsObject): RequestResult = {
+      def transformGetResponse(json: JsObject): JsObject = {
+        val featureIds = (json \ "features").as[JsArray].value.map(json => (json \ "id").get)
+        val projectIds = (json \ "projects").as[JsArray].value.map(json => (json \ "id").get)
+
+        json ++ Json.obj("features" -> JsArray(featureIds), "projects" -> JsArray(projectIds))
+      }
+      val hook     =
+        listWebhook(tenant).json.get.as[JsArray].value.find(json => (json \ "id").as[String] == id).get.as[JsObject]
+      val response = await(
+        ws.url(s"${ADMIN_BASE_URL}/tenants/$tenant/webhooks/$id")
+          .withCookies(cookies: _*)
+          .put(transformer(transformGetResponse(hook)))
+      )
+
+      RequestResult(
+        json = Try {
+          response.json
+        },
+        status = response.status
+      )
+    }
+
+    def fetchWebhookUser(tenant: String, webhook: String): RequestResult = {
+      val response = await(
+        ws.url(s"${ADMIN_BASE_URL}/tenants/$tenant/webhooks/$webhook/users")
+          .withCookies(cookies: _*)
+          .get()
+      )
+
+      RequestResult(
+        json = Try {
+          response.json
+        },
+        status = response.status
+      )
+    }
+
+    def updateUserRightForWebhook(
+        tenant: String,
+        webhook: String,
+        user: String,
+        right: Option[String]
+    ): RequestResult = {
+      val response = await(
+        ws.url(s"${ADMIN_BASE_URL}/tenants/$tenant/webhooks/$webhook/users/${user}/rights")
+          .withCookies(cookies: _*)
+          .put(right.fold(Json.obj())(r => Json.obj("level" -> Json.toJson(r))))
+      )
+
+      RequestResult(
+        json = Try {
+          response.json
+        },
+        status = response.status
+      )
+    }
+
+    def deleteWebhook(tenant: String, webhook: String): RequestResult = {
+      val response = await(
+        ws.url(s"${ADMIN_BASE_URL}/tenants/$tenant/webhooks/$webhook")
+          .withCookies(cookies: _*)
+          .delete()
+      )
+
+      RequestResult(
+        json = Try {
+          response.json
+        },
+        status = response.status
+      )
+    }
+
+    def createWebhook(tenant: String, webhook: TestWebhook) = {
+      val response = await(
+        BaseAPISpec.this.createWebhook(tenant, webhook, cookies)
+      )
+
+      RequestResult(
+        json = Try {
+          response.json
+        },
+        status = response.status
+      )
     }
 
     def patchFeatures(tenant: String, patches: Seq[TestFeaturePatch]) = {
@@ -1444,6 +1658,13 @@ object BaseAPISpec extends DefaultAwaitTimeout {
 
     def pathForScript(name: String): Option[String] = {
       scripts.get(name)
+    }
+
+    def findWebhookId(tenant: String, webhook: String): Option[String] = {
+      for (
+        tenantContent  <- webhooks.get(tenant);
+        webhookContent <- tenantContent.get(webhook)
+      ) yield webhookContent
     }
 
     def findFeatureId(tenant: String, project: String, feature: String): Option[String] = {
@@ -1650,6 +1871,20 @@ object BaseAPISpec extends DefaultAwaitTimeout {
 
     def updateFeature(tenant: String, id: String, json: JsValue): RequestResult = {
       BaseAPISpec.this.updateFeature(tenant, id, json, cookies)
+    }
+
+    def updateFeatureByName(
+        tenant: String,
+        project: String,
+        name: String,
+        transformer: JsObject => JsObject
+    ): RequestResult = {
+      val id              = this.findFeatureId(tenant, project, name).get
+      val projectResponse = this.fetchProject(tenant, project)
+      val jsonFeatures    = (projectResponse.json.get \ "features").as[JsArray]
+      val jsonFeature     = jsonFeatures.value.find(js => (js \ "name").as[String] == name).map(js => js.as[JsObject]).get
+      val newFeature      = transformer(jsonFeature)
+      BaseAPISpec.this.updateFeature(tenant, id, newFeature, cookies)
     }
 
     def updateAPIKey(
@@ -2462,8 +2697,13 @@ object BaseAPISpec extends DefaultAwaitTimeout {
       configuration: TestConfiguration =
         TestConfiguration(mailer = "Console", invitationMode = "Response", originEmail = null),
       mailerConfigurations: Map[String, JsObject] = Map(),
-      wasmScripts: Seq[TestWasmScript] = Seq()
+      wasmScripts: Seq[TestWasmScript] = Seq(),
+      webhookServers: Map[Int, (Int, String)] = Map()
   ) {
+
+    def withWebhookServer(port: Int, responseCode: Int = OK, path: String = "/"): TestSituationBuilder = {
+      copy(webhookServers = webhookServers + (port -> (responseCode, path)))
+    }
 
     def withWasmScript(
         name: String,
@@ -2554,8 +2794,14 @@ object BaseAPISpec extends DefaultAwaitTimeout {
       ]]                                                         = scala.collection.concurrent.TrieMap()
       val projectsData: TrieMap[String, TrieMap[String, String]] =
         TrieMap()
+      val webhooksData: TrieMap[String, TrieMap[String, String]] =
+        TrieMap()
       val tagsData: TrieMap[String, TrieMap[String, String]]     =
         TrieMap()
+
+      webhookServers.foreach { case (port, (status, path)) =>
+        setupWebhookServer(port = port, path = path, responseCode = status)
+      }
 
       val buildCookies = {
         val response = BaseAPISpec.this.login(ALL_RIGHTS_USERNAME, ALL_RIGHTS_USERNAME_PASSWORD)
@@ -2690,6 +2936,52 @@ object BaseAPISpec extends DefaultAwaitTimeout {
                   })
                 }))
               )
+              .flatMap(_ =>
+                Future.sequence(
+                  tenant.webhooks
+                    .map(webhook => {
+                      TestWebhook(
+                        name = webhook.name,
+                        url = webhook.url,
+                        features = webhook.features.map { case (tenant, project, name) =>
+                          featuresData(tenant)(project)(name)
+                        },
+                        projects = webhook.projects.map { case (tenant, project) =>
+                          projectsData(tenant)(project)
+                        },
+                        headers = webhook.headers,
+                        description = webhook.description,
+                        user = webhook.user,
+                        enabled = webhook.enabled,
+                        context = webhook.context,
+                        bodyTemplate = webhook.bodyTemplate
+                      )
+                    })
+                    .map(webhook => {
+                      createWebhook(
+                        tenant = tenant.name,
+                        webhook = webhook,
+                        cookies = buildCookies
+                      )
+                        .map(res => {
+                          if (res.status >= 400) {
+                            throw new RuntimeException("Failed to create tags")
+                          } else {
+                            val id = (res.json \ "id").get.as[String]
+                            webhooksData
+                              .getOrElse(
+                                tenant.name, {
+                                  val map = TrieMap[String, String]()
+                                  webhooksData.put(tenant.name, map)
+                                  map
+                                }
+                              )
+                              .put(webhook.name, id)
+                          }
+                        })
+                    })
+                )
+              )
               .flatMap(_ => {
                 Future
                   .sequence(
@@ -2798,6 +3090,7 @@ object BaseAPISpec extends DefaultAwaitTimeout {
       val immutableFeatureData = featuresData.view.mapValues(v => v.view.mapValues(vv => vv.toMap).toMap).toMap
       val immutableProjectData = projectsData.view.mapValues(v => v.toMap).toMap
       val immutableTagData     = tagsData.view.mapValues(v => v.toMap).toMap
+      val immutableWebhookData = webhooksData.view.mapValues(v => v.toMap).toMap
 
       TestSituation(
         keys = keyData,
@@ -2805,7 +3098,8 @@ object BaseAPISpec extends DefaultAwaitTimeout {
         features = immutableFeatureData,
         projects = immutableProjectData,
         tags = immutableTagData,
-        scripts = scriptIds
+        scripts = scriptIds,
+        webhooks = immutableWebhookData
       )
     }
   }

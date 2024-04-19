@@ -5,7 +5,7 @@ import fr.maif.izanami.env.Env
 import fr.maif.izanami.env.PostgresqlErrors.{FOREIGN_KEY_VIOLATION, RELATION_DOES_NOT_EXISTS, UNIQUE_VIOLATION}
 import fr.maif.izanami.env.pgimplicits.EnhancedRow
 import fr.maif.izanami.errors._
-import fr.maif.izanami.events.FeatureUpdated
+import fr.maif.izanami.events.{FeatureUpdated, SourceFeatureUpdated}
 import fr.maif.izanami.models.Feature.{activationConditionRead, activationConditionWrite}
 import fr.maif.izanami.models.FeatureContext.generateSubContextId
 import fr.maif.izanami.models._
@@ -385,13 +385,25 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               env.eventService
                 .emitEvent(
                   channel = tenant,
-                  event = FeatureUpdated(id = fid, project = project, tenant = tenant)
+                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant)
                 )
                 .map(_ => Right(()))
             }
           }
       })
     )
+  }
+
+  def isGlobal(tenant: String, context: Seq[String]): Future[Boolean] = {
+    env.postgresql
+      .queryOne(
+        s"""SELECT id FROM global_feature_contexts WHERE id=$$1""",
+        List(generateSubContextId(tenant, context.mkString("_"))),
+        schemas = Set(tenant)
+      ) { r =>
+        Some(())
+      }
+      .map(o => o.fold(false)(_ => true))
   }
 
   def updateFeatureStrategy(
@@ -482,7 +494,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               env.eventService
                 .emitEvent(
                   channel = tenant,
-                  event = FeatureUpdated(id = fid, project = project, tenant = tenant)
+                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant)
                 )
                 .map(_ => Right(()))
             case Left(err)  => Left(err).future
