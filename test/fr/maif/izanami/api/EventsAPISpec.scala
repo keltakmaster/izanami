@@ -19,6 +19,7 @@ import org.awaitility.Awaitility.await
 import play.api.libs.json.{JsArray, JsObject, Json}
 
 import java.time._
+import java.util.UUID
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.SECONDS
 
@@ -26,10 +27,11 @@ class EventsAPISpec extends BaseAPISpec {
 
   "event endpoint" should {
     "should send initial event" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
               TestProject("project")
@@ -42,7 +44,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         }
@@ -53,7 +55,7 @@ class EventsAPISpec extends BaseAPISpec {
       }
 
       val evt     = evts.findLast(e => e.eventType.get == "FEATURE_STATES")
-      val f1Id    = situation.findFeatureId(tenant = "test", project = "project", feature = "f1").get
+      val f1Id    = situation.findFeatureId(tenant = tenant, project = "project", feature = "f1").get
       val maybeF1 = (Json.parse(evt.get.data) \ "payload" \ f1Id).as[JsObject]
       (maybeF1 \ "name").as[String] mustEqual "f1"
       (maybeF1 \ "active").as[Boolean] mustEqual true
@@ -61,10 +63,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send initial event without condition if requested" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
               TestProject("project")
@@ -77,7 +80,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -89,7 +92,7 @@ class EventsAPISpec extends BaseAPISpec {
       }
 
       val evt     = evts.findLast(e => e.eventType.get == "FEATURE_STATES")
-      val f1Id    = situation.findFeatureId(tenant = "test", project = "project", feature = "f1").get
+      val f1Id    = situation.findFeatureId(tenant = tenant, project = "project", feature = "f1").get
       val maybeF1 = (Json.parse(evt.get.data) \ "payload" \ f1Id).as[JsObject]
       (maybeF1 \ "name").as[String] mustEqual "f1"
       (maybeF1 \ "active").as[Boolean] mustEqual true
@@ -97,10 +100,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send initial event periodically if asked" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
               TestProject("project")
@@ -113,7 +117,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -132,10 +136,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send keepAlive events when nothing happens" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
               TestProject("project")
@@ -148,7 +153,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -161,10 +166,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_created events when feature is created" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
               TestProject("project")
@@ -176,7 +182,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -187,7 +193,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.createFeature(
         "f3",
         project = "project",
-        tenant = "test",
+        tenant = tenant,
         enabled = false,
         conditions = Set(
           TestCondition(
@@ -220,10 +226,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_created events when feature is created without condition if not required" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
               TestProject("project")
@@ -235,7 +242,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -246,7 +253,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.createFeature(
         "f3",
         project = "project",
-        tenant = "test",
+        tenant = tenant,
         enabled = false,
         conditions = Set(
           TestCondition(
@@ -279,10 +286,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_updated event when feature is updated" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
               TestProject("project").withFeatures(TestFeature(name = "f1", enabled = true))
@@ -294,7 +302,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -302,11 +310,11 @@ class EventsAPISpec extends BaseAPISpec {
       )
       Thread.sleep(2000)
 
-      val projectResult = situation.fetchProject(tenant = "test", projectId = "project")
+      val projectResult = situation.fetchProject(tenant = tenant, projectId = "project")
       val feature       = (projectResult.json.get \ "features").get.as[JsArray].head.get.as[JsObject]
       val id            = (feature \ "id").as[String]
 
-      situation.updateFeature(tenant = "test", id = id, json = feature ++ Json.obj("enabled" -> false))
+      situation.updateFeature(tenant = tenant, id = id, json = feature ++ Json.obj("enabled" -> false))
 
       await atMost (10, SECONDS) until {
         evts.exists(s => s.eventType.get == "FEATURE_UPDATED")
@@ -320,10 +328,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_updated event when an overload is defined" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withGlobalContext(TestFeatureContext(name = "prod"))
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
@@ -336,7 +345,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -345,7 +354,7 @@ class EventsAPISpec extends BaseAPISpec {
       Thread.sleep(2000)
 
       situation.changeFeatureStrategyForContext(
-        tenant = "test",
+        tenant = tenant,
         project = "project",
         contextPath = "prod",
         feature = "f1",
@@ -365,10 +374,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_updated event when an overload is updated" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withGlobalContext(TestFeatureContext(name = "prod"))
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
@@ -381,7 +391,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -390,7 +400,7 @@ class EventsAPISpec extends BaseAPISpec {
       Thread.sleep(2000)
 
       situation.changeFeatureStrategyForContext(
-        tenant = "test",
+        tenant = tenant,
         project = "project",
         contextPath = "prod",
         feature = "f1",
@@ -398,7 +408,7 @@ class EventsAPISpec extends BaseAPISpec {
       )
 
       situation.changeFeatureStrategyForContext(
-        tenant = "test",
+        tenant = tenant,
         project = "project",
         contextPath = "prod",
         feature = "f1",
@@ -418,10 +428,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_updated event when an overload is deleted" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withGlobalContext(TestFeatureContext(name = "prod"))
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
@@ -434,7 +445,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -443,7 +454,7 @@ class EventsAPISpec extends BaseAPISpec {
       Thread.sleep(2000)
 
       situation.changeFeatureStrategyForContext(
-        tenant = "test",
+        tenant = tenant,
         project = "project",
         contextPath = "prod",
         feature = "f1",
@@ -451,7 +462,7 @@ class EventsAPISpec extends BaseAPISpec {
       )
 
       val resp = situation.deleteFeatureOverload(
-        tenant = "test",
+        tenant = tenant,
         project = "project",
         path = "prod",
         feature = "f1"
@@ -470,10 +481,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_deleted event when a feature is deleted" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withGlobalContext(TestFeatureContext(name = "prod"))
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
@@ -486,7 +498,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -494,11 +506,11 @@ class EventsAPISpec extends BaseAPISpec {
       )
       Thread.sleep(2000)
 
-      val fid = situation.findFeatureId(tenant = "test", project = "project", feature = "f1").get
+      val fid = situation.findFeatureId(tenant = tenant, project = "project", feature = "f1").get
 
       situation.deleteFeature(
-        tenant = "test",
-        id = situation.findFeatureId(tenant = "test", project = "project", feature = "f1").get
+        tenant = tenant,
+        id = situation.findFeatureId(tenant = tenant, project = "project", feature = "f1").get
       )
 
       await atMost (10, SECONDS) until {
@@ -512,10 +524,11 @@ class EventsAPISpec extends BaseAPISpec {
     }
 
     "should send feature_deleted events if project is deleted" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()
         .loggedInWithAdminRights()
         .withTenants(
-          TestTenant("test")
+          TestTenant(tenant)
             .withGlobalContext(TestFeatureContext(name = "prod"))
             .withApiKeys(TestApiKey("mykey", enabled = true, admin = true))
             .withProjects(
@@ -528,7 +541,7 @@ class EventsAPISpec extends BaseAPISpec {
       situation.listenEvents(
         key = "mykey",
         features = Seq(),
-        projects = Seq(situation.findProjectId("test", "project").get),
+        projects = Seq(situation.findProjectId(tenant, "project").get),
         consumer = evt => {
           evts.addOne(evt);
         },
@@ -536,12 +549,12 @@ class EventsAPISpec extends BaseAPISpec {
       )
       Thread.sleep(2000)
 
-      situation.deleteProject(project = "project", tenant = "test")
+      situation.deleteProject(project = "project", tenant = tenant)
       await atMost (10, SECONDS) until {
         evts.exists(s => s.eventType.get == "FEATURE_DELETED")
       }
 
-      val f1Id = situation.findFeatureId(tenant = "test", project = "project", feature = "f1").get
+      val f1Id = situation.findFeatureId(tenant = tenant, project = "project", feature = "f1").get
       val evt  = evts.findLast(s => s.eventType.get == "FEATURE_DELETED")
       (Json.parse(evt.get.data) \ "payload").as[String] mustEqual f1Id
     }

@@ -2,6 +2,7 @@ package fr.maif.izanami.datastores
 
 import fr.maif.izanami.datastores.webhookImplicits.WebhookRow
 import fr.maif.izanami.env.Env
+import fr.maif.izanami.env.PostgresqlErrors.RELATION_DOES_NOT_EXISTS
 import fr.maif.izanami.env.pgimplicits.EnhancedRow
 import fr.maif.izanami.errors.{IzanamiError, WebhookCreationFailed, WebhookDoesNotExists}
 import fr.maif.izanami.events.{EventService, IzanamiEvent}
@@ -10,8 +11,10 @@ import fr.maif.izanami.models.{LightWebhook, Webhook, WebhookFeature, WebhookPro
 import fr.maif.izanami.utils.Datastore
 import fr.maif.izanami.utils.syntax.implicits.BetterJsValue
 import io.vertx.core.json.JsonObject
+import io.vertx.pgclient.PgException
 import io.vertx.sqlclient.Row
 import play.api.libs.json.Json
+import play.api.mvc.Results.InternalServerError
 
 import java.net.{URI, URL}
 import java.util
@@ -72,9 +75,10 @@ class WebhooksDatastore(val env: Env) extends Datastore {
       ) { _ => () }
   }
 
-  def findAbandoneddWebhooks(tenant: String): Future[Seq[(LightWebhook, IzanamiEvent)]] = {
-    env.postgresql.queryAll(
-      s"""
+  def findAbandoneddWebhooks(tenant: String): Future[Option[Seq[(LightWebhook, IzanamiEvent)]]] = {
+    env.postgresql
+      .queryAll(
+        s"""
          |SELECT w.*, e.event,
          |  COALESCE(json_agg(wf.feature) FILTER (WHERE wf.feature IS NOT NULL), '[]') as features,
          |  COALESCE(json_agg(wp.project) FILTER (WHERE wp.project IS NOT NULL), '[]') as projects
@@ -86,15 +90,20 @@ class WebhooksDatastore(val env: Env) extends Datastore {
          |  AND e.id = wcs.event
          |  GROUP BY w.id, e.event
          |""".stripMargin,
-      List(java.lang.Long.valueOf(300)),
-      schemas = Set(tenant)
-    ) { r =>
-      for (
-        webhook      <- r.optLightWebhook();
-        event        <- r.optJsObject("event");
-        izanamiEvent <- event.asOpt[IzanamiEvent](EventService.eventFormat)
-      ) yield (webhook, izanamiEvent)
-    }
+        List(java.lang.Long.valueOf(300)),
+        schemas = Set(tenant)
+      ) { r =>
+        for (
+          webhook      <- r.optLightWebhook();
+          event        <- r.optJsObject("event");
+          izanamiEvent <- event.asOpt[IzanamiEvent](EventService.eventFormat)
+        ) yield (webhook, izanamiEvent)
+      }
+      .map(s => Some(s))
+      .recover {
+        case f: PgException if f.getSqlState == RELATION_DOES_NOT_EXISTS => None
+        case e                                                           => throw e
+      }
   }
 
   def updateWebhook(tenant: String, id: UUID, webhook: LightWebhook): Future[Either[IzanamiError, Unit]] = {

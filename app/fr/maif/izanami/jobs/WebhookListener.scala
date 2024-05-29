@@ -1,6 +1,6 @@
 package fr.maif.izanami.jobs
 
-import akka.actor.ActorSystem
+import akka.actor.{ActorSystem, Cancellable}
 import akka.pattern.Patterns.after
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.github.jknack.handlebars.{Context, Handlebars}
@@ -12,6 +12,7 @@ import fr.maif.izanami.models.{LightWebhook, RequestContext}
 import fr.maif.izanami.web.FeatureContextPath
 import play.api.libs.json.JsValue
 
+import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.ExecutionContext.global
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -47,20 +48,25 @@ class WebhookListener(env: Env, eventService: EventService) {
 
   def startListening(tenant: String): Unit = {
     logger.info(s"Initializing webhook event listener for tenant $tenant")
-    env.actorSystem.scheduler.scheduleAtFixedRate(0.minutes, 5.minutes)(() => {
+    val cancelRef = new AtomicReference[Cancellable]()
+    val cancellable = env.actorSystem.scheduler.scheduleAtFixedRate(0.minutes, 5.minutes)(() => {
       env.datastores.webhook
         .findAbandoneddWebhooks(tenant)
-        .map(s =>
-          s.filter { case (_, event) =>
-            event.isInstanceOf[FeatureEvent]
-          }.foreach {
-            case (webhook, event) => {
-              logger.info(s"Restarting call for abandonned hook ${webhook.name}")
-              handleEventForHook(tenant, event.asInstanceOf[FeatureEvent], webhook)
+        .map {
+          case Some(s) =>
+            s.filter { case (_, event) =>
+              event.isInstanceOf[FeatureEvent]
+            }.foreach {
+              case (webhook, event) => {
+                logger.info(s"Restarting call for abandonned hook ${webhook.name}")
+                handleEventForHook(tenant, event.asInstanceOf[FeatureEvent], webhook)
+              }
             }
-          }
-        )
+          case None => cancelRef.get().cancel()
+        }
     })
+
+    cancelRef.set(cancellable)
     env.eventService
       .consume(tenant)
       .source

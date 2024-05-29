@@ -260,7 +260,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                         case Left(error) => Future.successful(Left(error))
                         case _ => env.eventService.emitEvent(
                           channel = tenant,
-                          event = FeatureUpdated(id = id,
+                          event = SourceFeatureUpdated(
+                            id = id,
                             project = oldFeature.project,
                             tenant = tenant)
                         )(conn)

@@ -15,16 +15,7 @@ import com.github.tomakehurst.wiremock.client.WireMock
 import com.github.tomakehurst.wiremock.client.WireMock.aResponse
 import com.github.tomakehurst.wiremock.core.{Container, WireMockConfiguration}
 import com.github.tomakehurst.wiremock.http.{HttpHeaders, Request}
-import fr.maif.izanami.api.BaseAPISpec.{
-  cleanUpDB,
-  eventKillSwitch,
-  login,
-  shouldCleanUpEvents,
-  shouldCleanUpMails,
-  shouldCleanUpWasmServer,
-  webhookServers,
-  ws
-}
+import fr.maif.izanami.api.BaseAPISpec.{cleanUpDB, eventKillSwitch, login, shouldCleanUpEvents, shouldCleanUpMails, shouldCleanUpWasmServer, webhookServers, ws}
 import fr.maif.izanami.utils.{WasmManagerClient, WiremockResponseDefinitionTransformer}
 import org.awaitility.scala.AwaitilitySupport
 import org.postgresql.util.PSQLException
@@ -33,7 +24,7 @@ import org.scalatestplus.play.PlaySpec
 import play.api.libs.json._
 import play.api.libs.ws.ahc.{AhcWSClient, StandaloneAhcWSClient}
 import play.api.libs.ws.{WSAuthScheme, WSClient, WSCookie, WSResponse}
-import play.api.test.Helpers.{await, OK}
+import play.api.test.Helpers.{OK, await}
 import play.api.mvc.MultipartFormData.FilePart
 import play.api.test.DefaultAwaitTimeout
 
@@ -44,6 +35,7 @@ import java.time._
 import java.time.format.DateTimeFormatter
 import java.util.{Objects, TimeZone}
 import scala.collection.concurrent.TrieMap
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.{Future, Promise}

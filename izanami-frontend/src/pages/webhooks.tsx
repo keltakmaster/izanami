@@ -80,7 +80,7 @@ export function WebHooks(props: { tenant: string }) {
               type="button"
               onClick={() => setCreating(true)}
             >
-              Create new key
+              Create new webhook
             </button>
           )}
         </div>
