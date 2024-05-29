@@ -748,7 +748,7 @@ class UsersDatastore(val env: Env) extends Datastore {
       tenant: String,
       project: String,
       level: RightLevel
-  ): Future[Either[IzanamiError, Boolean]] = {
+  ): Future[Either[IzanamiError, Option[String]]] = {
     env.postgresql
       .queryOne(
         s"""
@@ -766,9 +766,8 @@ class UsersDatastore(val env: Env) extends Datastore {
            |""".stripMargin,
         List(session, tenant, project, superiorOrEqualLevels(level).map(l => l.toString.toUpperCase).toArray),
         schemas = Set(tenant)
-      ) { _ => Some(true) }
-      .map(maybeBoolean => maybeBoolean.getOrElse(false))
-      .map(Right(_))
+      ) { r => r.optString("username") }
+      .map(maybeUser => Right(maybeUser))
       .recover {
         case f: PgException if f.getSqlState == RELATION_DOES_NOT_EXISTS => Left(TenantDoesNotExists(tenant))
         case _                                                           => Left(InternalServerError())

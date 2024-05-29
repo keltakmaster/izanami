@@ -145,7 +145,7 @@ class ProjectsDatastore(val env: Env) extends Datastore {
     ) { row => row.optProject() }
   }
 
-  def deleteProject(tenant: String, project: String): Future[Either[IzanamiError, List[String]]] = {
+  def deleteProject(tenant: String, project: String, user: String): Future[Either[IzanamiError, List[String]]] = {
     env.postgresql.executeInTransaction(conn => {
       env.postgresql
         .queryOne(
@@ -161,7 +161,7 @@ class ProjectsDatastore(val env: Env) extends Datastore {
             Future
               .sequence(
                 ids.map(id =>
-                  env.eventService.emitEvent(channel=tenant, event=SourceFeatureDeleted(id=id, project=project, tenant=tenant))(conn)
+                  env.eventService.emitEvent(channel=tenant, event=SourceFeatureDeleted(id=id, project=project, tenant=tenant), user = user)(conn)
                 )
               )
               .map(_ => Right(ids))

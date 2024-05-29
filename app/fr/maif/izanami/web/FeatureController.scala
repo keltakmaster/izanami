@@ -301,7 +301,7 @@ class FeatureController(
                   )
                 ).toFuture
               } else {
-                env.datastores.features.applyPatch(tenant, fs).map(_ => NoContent)
+                env.datastores.features.applyPatch(tenant, fs, request.user.username).map(_ => NoContent)
               }
             })
         })
@@ -324,7 +324,7 @@ class FeatureController(
             }
             .flatMap(_ =>
               env.datastores.features
-                .create(tenant, project, feature)
+                .create(tenant, project, feature, request.user)
                 .flatMap { either =>
                   {
                     either match {
@@ -376,7 +376,7 @@ class FeatureController(
                     Forbidden("Your are not allowed to modify this feature").toFuture
                   case Right(Some(oldFeature))                                                        => {
                     env.datastores.features
-                      .update(tenant = tenant, id = id, feature = feature)
+                      .update(tenant = tenant, id = id, feature = feature, user = request.user.username)
                       .flatMap {
                         case Right(id) => env.datastores.features.findById(tenant, id)
                         case Left(err) => Future.successful(Left(err))
@@ -433,7 +433,7 @@ class FeatureController(
 
             if (canCreateOrModifyFeature(feature, request.user)) {
               env.datastores.features
-                .delete(tenant, id)
+                .delete(tenant, id, request.user.username)
                 .map(maybeFeature =>
                   maybeFeature
                     .map(_ => NoContent)

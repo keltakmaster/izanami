@@ -350,7 +350,8 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
       tenant: String,
       project: String,
       path: Seq[String],
-      feature: String
+      feature: String,
+      user: String
   ): Future[Either[IzanamiError, Unit]] = {
     val isLocal = env.postgresql
       .queryOne(
@@ -385,7 +386,8 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               env.eventService
                 .emitEvent(
                   channel = tenant,
-                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant)
+                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant),
+                  user = user
                 )
                 .map(_ => Right(()))
             }
@@ -411,7 +413,8 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
       project: String,
       path: Seq[String],
       feature: String,
-      strategy: ContextualFeatureStrategy
+      strategy: ContextualFeatureStrategy,
+      user: String
   ): Future[Either[IzanamiError, Unit]] = {
     // TODO factorize this
     val isLocal = env.postgresql
@@ -494,7 +497,8 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               env.eventService
                 .emitEvent(
                   channel = tenant,
-                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant)
+                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant),
+                  user = user
                 )
                 .map(_ => Right(()))
             case Left(err)  => Left(err).future

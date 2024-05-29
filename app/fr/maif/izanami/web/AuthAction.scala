@@ -200,12 +200,12 @@ class ProjectAuthAction(
     project: String,
     minimumLevel: RightLevel
 )(implicit ec: ExecutionContext)
-    extends ActionBuilder[Request, AnyContent] {
+    extends ActionBuilder[UserNameRequest, AnyContent] {
 
   override def parser: BodyParser[AnyContent]               = bodyParser
   override protected def executionContext: ExecutionContext = ec
 
-  override def invokeBlock[A](request: Request[A], block: Request[A] => Future[Result]): Future[Result] = {
+  override def invokeBlock[A](request: Request[A], block: UserNameRequest[A] => Future[Result]): Future[Result] = {
     extractClaims(request, env.configuration.get[String]("app.authentication.secret"), env.encryptionKey)
       .flatMap(claims => claims.subject)
       .fold(Future.successful(Unauthorized(Json.obj("message" -> "Invalid token"))))(subject => {
@@ -214,9 +214,9 @@ class ProjectAuthAction(
           .flatMap(authorized =>
             authorized.fold(
               err => Future.successful(Results.Status(err.status)(Json.toJson(err))),
-              authorized => {
-                if (authorized) {
-                  block(request)
+              maybeUser => {
+                if (maybeUser.isDefined) {
+                  block(UserNameRequest(request = request, user = maybeUser.get))
                 } else {
                   Future.successful(Forbidden(Json.obj("message" -> "User does not have enough rights for this operation")))
                 }

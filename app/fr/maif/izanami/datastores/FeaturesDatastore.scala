@@ -185,7 +185,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
     }
   }
 
-  def applyPatch(tenant: String, operations: Seq[FeaturePatch]): Future[Unit] = {
+  def applyPatch(tenant: String, operations: Seq[FeaturePatch], user: String): Future[Unit] = {
     env.postgresql.executeInTransaction(
       implicit conn => {
         val eventualId: Future[Unit] = Future
@@ -208,7 +208,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                   case Some((id, name, project, enabled)) =>
                     env.eventService.emitEvent(
                       channel=tenant,
-                      event=SourceFeatureUpdated(id=id, project=project, tenant=tenant)
+                      event=SourceFeatureUpdated(id=id, project=project, tenant=tenant),
+                      user = user
                     )
                   case None                               => Future.successful(())
                 }
@@ -233,7 +234,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                       channel=tenant,
                       event=SourceFeatureUpdated(id=id,
                       project=project,
-                      tenant=tenant)
+                      tenant=tenant),
+                      user = user
                     )(conn)
                   case None                               => Future.successful(())
                 }
@@ -263,7 +265,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                           event = SourceFeatureUpdated(
                             id = id,
                             project = oldFeature.project,
-                            tenant = tenant)
+                            tenant = tenant),
+                          user = user
                         )(conn)
                       }
                     }
@@ -290,7 +293,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                   case Some((id, name, project, enabled)) =>
                     env.eventService.emitEvent(
                       channel = tenant,
-                      event = SourceFeatureDeleted(id = id, project = project, tenant = tenant)
+                      event = SourceFeatureDeleted(id = id, project = project, tenant = tenant),
+                      user = user
                     )(conn)
                   case None                               => Future.successful(())
                 }
@@ -823,7 +827,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
           .createProjects(tenant, features.map(_.project).toSet, conflictStrategy, user, conn = conn.some)
           .flatMap {
             case Left(error) => Future.successful(Left(List(error)))
-            case _           => createBulk(tenant, features, conflictStrategy, conn)
+            case _           => createBulk(tenant, features, conflictStrategy, conn, user)
           }
       }
 
@@ -835,7 +839,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
       tenant: String,
       features: Iterable[AbstractFeature],
       conflictStrategy: ImportConflictStrategy,
-      conn: SqlConnection
+      conn: SqlConnection,
+      user: String
   ): Future[Either[List[IzanamiError], Unit]] = {
     def insertFeatures[T <: ClusterSerializable](
         params: (
@@ -1007,7 +1012,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
             .sequence(ids.map { case (id, project) =>
               env.eventService.emitEvent(
                 channel = tenant,
-                event = SourceFeatureCreated(id = id, project = project, tenant = tenant)
+                event = SourceFeatureCreated(id = id, project = project, tenant = tenant),
+                user = user
               )(conn)
             })
             .map(_ => Right(()))
@@ -1015,9 +1021,9 @@ class FeaturesDatastore(val env: Env) extends Datastore {
       }
   }
 
-  def create(tenant: String, project: String, feature: AbstractFeature): Future[Either[IzanamiError, String]] = {
+  def create(tenant: String, project: String, feature: AbstractFeature, user: String): Future[Either[IzanamiError, String]] = {
     env.postgresql.executeInTransaction(
-      implicit conn => doCreate(tenant, project, feature, conn),
+      implicit conn => doCreate(tenant, project, feature, conn, user),
       schemas = Set(tenant)
     )
   }
@@ -1026,7 +1032,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
       tenant: String,
       project: String,
       feature: AbstractFeature,
-      conn: SqlConnection
+      conn: SqlConnection,
+      user: String
   ): Future[Either[IzanamiError, String]] = {
     (feature match {
       case Feature(_, _, _, _, _, _, _, _)              => Future(Right(()))
@@ -1036,7 +1043,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
     }).flatMap {
       case Left(err) => Left(err).future
       case Right(_)  => {
-        insertFeature(tenant, project, feature)(conn)
+        insertFeature(tenant, project, feature, user)(conn)
           .flatMap(eitherId => {
             eitherId.fold(
               err => Future.successful(Left(err)),
@@ -1224,6 +1231,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
       tenant: String,
       project: String,
       feature: AbstractFeature,
+      user: String,
       importConflictStrategy: ImportConflictStrategy = Fail
   )(implicit
       conn: SqlConnection
@@ -1296,7 +1304,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
         case Right(id)   =>
           env.eventService.emitEvent(
             channel = tenant,
-            event = SourceFeatureCreated(id = id, project = project, tenant = tenant)
+            event = SourceFeatureCreated(id = id, project = project, tenant = tenant),
+            user = user
           )(conn)
           .map(_ =>
             Right(id)
@@ -1304,7 +1313,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
       }
   }
 
-  def update(tenant: String, id: String, feature: AbstractFeature): Future[Either[IzanamiError, String]] = {
+  def update(tenant: String, id: String, feature: AbstractFeature, user: String): Future[Either[IzanamiError, String]] = {
     // TODO allow updating metadata
     env.postgresql.executeInTransaction(
       conn => {
@@ -1403,7 +1412,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
             case r @ Right(id) =>
               env.eventService.emitEvent(
                 channel=tenant,
-                event=SourceFeatureUpdated(id=id, project=feature.project, tenant=tenant)
+                event=SourceFeatureUpdated(id=id, project=feature.project, tenant=tenant),
+                user = user
               )(conn)
               .map(_ => r)
           }
@@ -1441,7 +1451,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
     }
   }
 
-  def delete(tenant: String, id: String): Future[Either[IzanamiError, String]] = {
+  def delete(tenant: String, id: String, user: String): Future[Either[IzanamiError, String]] = {
     env.postgresql.executeInTransaction(conn =>
       env.postgresql
         .queryOne(
@@ -1465,7 +1475,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
           case Right((id, project)) =>
             env.eventService.emitEvent(
               channel = tenant,
-              event = SourceFeatureDeleted(id = id, project = project, tenant = tenant)
+              event = SourceFeatureDeleted(id = id, project = project, tenant = tenant),
+              user = user
             )(conn)
             .map(_ =>
               Right(id)

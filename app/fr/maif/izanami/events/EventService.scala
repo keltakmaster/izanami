@@ -235,7 +235,7 @@ class EventService(env: Env) {
   val sourceMap: scala.collection.mutable.Map[String, SourceDescriptor] =
     scala.collection.mutable.Map()
 
-  def emitEvent(channel: String, event: SourceIzanamiEvent)(implicit conn: SqlConnection): Future[Unit] = {
+  def emitEvent(channel: String, event: SourceIzanamiEvent, user: String)(implicit conn: SqlConnection): Future[Unit] = {
     val global = channel.equalsIgnoreCase("izanami") || event.isInstanceOf[SourceTenantDeleted]
     env.postgresql
       .queryOne(

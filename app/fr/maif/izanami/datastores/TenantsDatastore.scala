@@ -120,7 +120,7 @@ class TenantsDatastore(val env: Env) extends Datastore {
         }.flatMap {
           case Left(value) => Left(value).future
           case r@Right(tenant) => {
-            env.eventService.emitEvent(channel = IZANAMI_CHANNEL, event = SourceTenantCreated(tenant.name))(conn)
+            env.eventService.emitEvent(channel = IZANAMI_CHANNEL, event = SourceTenantCreated(tenant.name), user = user)(conn)
               .map(_ => r)
           }
         }
@@ -174,7 +174,7 @@ class TenantsDatastore(val env: Env) extends Datastore {
       .map { _.toRight(TenantDoesNotExists(name)) }
   }
 
-  def deleteTenant(name: String): Future[Either[IzanamiError, Unit]] = {
+  def deleteTenant(name: String, user: String): Future[Either[IzanamiError, Unit]] = {
 
     env.postgresql.executeInTransaction(conn => {
       env.postgresql
@@ -193,7 +193,7 @@ class TenantsDatastore(val env: Env) extends Datastore {
         ){_ => Some(())}
           .map(_ => Right(()))
       }.flatMap(r => {
-          env.eventService.emitEvent(channel=name, event=SourceTenantDeleted(name))(conn)
+          env.eventService.emitEvent(channel=name, event=SourceTenantDeleted(name), user = user)(conn)
             .map(_ => r)
         })
     })
