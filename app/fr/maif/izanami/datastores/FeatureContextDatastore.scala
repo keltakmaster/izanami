@@ -386,8 +386,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               env.eventService
                 .emitEvent(
                   channel = tenant,
-                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant),
-                  user = user
+                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant, user=user)
                 )
                 .map(_ => Right(()))
             }
@@ -497,8 +496,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               env.eventService
                 .emitEvent(
                   channel = tenant,
-                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant),
-                  user = user
+                  event = SourceFeatureUpdated(id = fid, project = project, tenant = tenant, user=user)
                 )
                 .map(_ => Right(()))
             case Left(err)  => Left(err).future

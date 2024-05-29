@@ -208,8 +208,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                   case Some((id, name, project, enabled)) =>
                     env.eventService.emitEvent(
                       channel=tenant,
-                      event=SourceFeatureUpdated(id=id, project=project, tenant=tenant),
-                      user = user
+                      event=SourceFeatureUpdated(id=id, project=project, tenant=tenant, user=user)
                     )
                   case None                               => Future.successful(())
                 }
@@ -234,8 +233,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                       channel=tenant,
                       event=SourceFeatureUpdated(id=id,
                       project=project,
-                      tenant=tenant),
-                      user = user
+                      tenant=tenant,
+                      user=user)
                     )(conn)
                   case None                               => Future.successful(())
                 }
@@ -265,8 +264,8 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                           event = SourceFeatureUpdated(
                             id = id,
                             project = oldFeature.project,
-                            tenant = tenant),
-                          user = user
+                            tenant = tenant,
+                            user=user)
                         )(conn)
                       }
                     }
@@ -293,8 +292,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                   case Some((id, name, project, enabled)) =>
                     env.eventService.emitEvent(
                       channel = tenant,
-                      event = SourceFeatureDeleted(id = id, project = project, tenant = tenant),
-                      user = user
+                      event = SourceFeatureDeleted(id = id, project = project, tenant = tenant, user = user)
                     )(conn)
                   case None                               => Future.successful(())
                 }
@@ -1012,8 +1010,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
             .sequence(ids.map { case (id, project) =>
               env.eventService.emitEvent(
                 channel = tenant,
-                event = SourceFeatureCreated(id = id, project = project, tenant = tenant),
-                user = user
+                event = SourceFeatureCreated(id = id, project = project, tenant = tenant, user = user)
               )(conn)
             })
             .map(_ => Right(()))
@@ -1304,8 +1301,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
         case Right(id)   =>
           env.eventService.emitEvent(
             channel = tenant,
-            event = SourceFeatureCreated(id = id, project = project, tenant = tenant),
-            user = user
+            event = SourceFeatureCreated(id = id, project = project, tenant = tenant, user = user)
           )(conn)
           .map(_ =>
             Right(id)
@@ -1412,8 +1408,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
             case r @ Right(id) =>
               env.eventService.emitEvent(
                 channel=tenant,
-                event=SourceFeatureUpdated(id=id, project=feature.project, tenant=tenant),
-                user = user
+                event=SourceFeatureUpdated(id=id, project=feature.project, tenant=tenant, user = user)
               )(conn)
               .map(_ => r)
           }
@@ -1475,8 +1470,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
           case Right((id, project)) =>
             env.eventService.emitEvent(
               channel = tenant,
-              event = SourceFeatureDeleted(id = id, project = project, tenant = tenant),
-              user = user
+              event = SourceFeatureDeleted(id = id, project = project, tenant = tenant, user = user)
             )(conn)
             .map(_ =>
               Right(id)

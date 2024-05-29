@@ -17,8 +17,11 @@ import play.api.Logger
 
 import scala.concurrent.{ExecutionContext, Future}
 
-sealed trait SourceIzanamiEvent
+sealed trait SourceIzanamiEvent {
+  val user: String
+}
 sealed trait SourceFeatureEvent                                              extends SourceIzanamiEvent {
+  override val user: String
   val id: String
   val project: String
   val tenant: String
@@ -31,21 +34,24 @@ case class SourceFeatureCreated(
     id: String,
     project: String,
     tenant: String,
+    override val user: String,
     conditionByContext: Option[Map[String, AbstractFeature]] = None
 )                                                                            extends SourceConditionFeatureEvent
 case class SourceFeatureUpdated(
     id: String,
     project: String,
     tenant: String,
+    override val user: String,
     conditionByContext: Option[Map[String, AbstractFeature]] = None
 )                                                                            extends SourceConditionFeatureEvent
-case class SourceFeatureDeleted(id: String, project: String, tenant: String) extends SourceFeatureEvent
-case class SourceTenantDeleted(tenant: String)                               extends SourceIzanamiEvent
+case class SourceFeatureDeleted(id: String, project: String, tenant: String, override val user: String) extends SourceFeatureEvent
+case class SourceTenantDeleted(tenant: String, override val user: String)                               extends SourceIzanamiEvent
 
-case class SourceTenantCreated(tenant: String) extends SourceIzanamiEvent
+case class SourceTenantCreated(tenant: String, override val user: String) extends SourceIzanamiEvent
 
 sealed trait IzanamiEvent {
   val eventId: Long
+  val user: String
 }
 
 sealed trait FeatureEvent                                                                          extends IzanamiEvent {
@@ -53,10 +59,12 @@ sealed trait FeatureEvent                                                       
   val id: String
   val project: String
   val tenant: String
+  override val user: String
 }
 // Condition by contetx is an option since feature may have been deleted between emission and reception of the event
 sealed trait ConditionFeatureEvent                                                                 extends FeatureEvent {
   override val eventId: Long
+  override val user: String
   val conditionByContext: Option[Map[String, AbstractFeature]]
 }
 case class FeatureCreated(
@@ -64,6 +72,7 @@ case class FeatureCreated(
     id: String,
     project: String,
     tenant: String,
+    override val user: String,
     conditionByContext: Option[Map[String, AbstractFeature]] = None
 )                                                                                                  extends ConditionFeatureEvent
 case class FeatureUpdated(
@@ -71,12 +80,13 @@ case class FeatureUpdated(
     id: String,
     project: String,
     tenant: String,
+    override val user: String,
     conditionByContext: Option[Map[String, AbstractFeature]] = None
 )                                                                                                  extends ConditionFeatureEvent
-case class FeatureDeleted(override val eventId: Long, id: String, project: String, tenant: String) extends FeatureEvent
-case class TenantDeleted(override val eventId: Long, tenant: String)                               extends IzanamiEvent
+case class FeatureDeleted(override val eventId: Long, id: String, project: String, tenant: String, override val user: String) extends FeatureEvent
+case class TenantDeleted(override val eventId: Long, tenant: String, override val user: String)                               extends IzanamiEvent
 
-case class TenantCreated(override val eventId: Long, tenant: String) extends IzanamiEvent
+case class TenantCreated(override val eventId: Long, tenant: String, override val user: String) extends IzanamiEvent
 
 case class SourceDescriptor(
     source: Source[IzanamiEvent, NotUsed],
@@ -93,66 +103,72 @@ object EventService {
   val IZANAMI_CHANNEL = "izanami"
 
   implicit val sourceEventWrites: Writes[SourceIzanamiEvent] = {
-    case SourceFeatureCreated(id, project, tenant, conditions) =>
+    case SourceFeatureCreated(id, project, tenant, user, conditions) =>
       Json.obj(
         "id"         -> id,
         "project"    -> project,
         "tenant"     -> tenant,
         "conditions" -> conditions,
+        "user" -> user,
         "type"       -> "FEATURE_CREATED"
       )
-    case SourceFeatureUpdated(id, project, tenant, conditions) =>
+    case SourceFeatureUpdated(id, project, tenant, user, conditions) =>
       Json.obj(
         "id"         -> id,
         "project"    -> project,
         "tenant"     -> tenant,
+        "user" -> user,
         "conditions" -> conditions,
         "type"       -> "FEATURE_UPDATED"
       )
-    case SourceFeatureDeleted(id, project, tenant)             =>
+    case SourceFeatureDeleted(id, project, user, tenant)             =>
       Json.obj(
         "id"      -> id,
         "project" -> project,
         "tenant"  -> tenant,
+        "user" -> user,
         "type"    -> "FEATURE_DELETED"
       )
-    case SourceTenantDeleted(tenant)                           => Json.obj("tenant" -> tenant, "type" -> "TENANT_DELETED")
-    case SourceTenantCreated(tenant)                           => Json.obj("tenant" -> tenant, "type" -> "TENANT_CREATED")
+    case SourceTenantDeleted(tenant, user)                           => Json.obj("tenant" -> tenant, "type" -> "TENANT_DELETED", "user" -> user)
+    case SourceTenantCreated(tenant, user)                           => Json.obj("tenant" -> tenant, "type" -> "TENANT_CREATED", "user" -> user)
   }
   implicit val featureWrites: Writes[AbstractFeature]        = featureWrite
   implicit val eventFormat: Format[IzanamiEvent]             = new Format[IzanamiEvent] {
     override def writes(o: IzanamiEvent): JsValue = {
       o match {
-        case FeatureCreated(eventId, id, project, tenant, conditions) =>
+        case FeatureCreated(eventId, id, project, tenant, user, conditions) =>
           Json.obj(
             "eventId"    -> eventId,
             "id"         -> id,
             "project"    -> project,
             "tenant"     -> tenant,
+            "user"     -> user,
             "conditions" -> conditions,
             "type"       -> "FEATURE_CREATED"
           )
-        case FeatureUpdated(eventId, id, project, tenant, conditions) =>
+        case FeatureUpdated(eventId, id, project, tenant, user, conditions) =>
           Json.obj(
             "eventId"    -> eventId,
             "id"         -> id,
             "project"    -> project,
             "tenant"     -> tenant,
+            "user" -> user,
             "conditions" -> conditions,
             "type"       -> "FEATURE_UPDATED"
           )
-        case FeatureDeleted(eventId, id, project, tenant)             =>
+        case FeatureDeleted(eventId, id, project, tenant, user)             =>
           Json.obj(
             "eventId" -> eventId,
             "id"      -> id,
             "project" -> project,
             "tenant"  -> tenant,
+            "user" -> user,
             "type"    -> "FEATURE_DELETED"
           )
-        case TenantDeleted(eventId, tenant)                           =>
-          Json.obj("eventId" -> eventId, "tenant" -> tenant, "type" -> "TENANT_DELETED")
-        case TenantCreated(eventId, tenant)                           =>
-          Json.obj("eventId" -> eventId, "tenant" -> tenant, "type" -> "TENANT_CREATED")
+        case TenantDeleted(eventId, tenant, user)                           =>
+          Json.obj("eventId" -> eventId, "tenant" -> tenant, "type" -> "TENANT_DELETED", "user" -> user)
+        case TenantCreated(eventId, tenant, user)                           =>
+          Json.obj("eventId" -> eventId, "tenant" -> tenant, "type" -> "TENANT_CREATED", "user" -> user)
       }
     }
 
@@ -163,12 +179,13 @@ object EventService {
             eventId <- (json \ "eventId").asOpt[Long];
             id      <- (json \ "id").asOpt[String];
             tenant  <- (json \ "tenant").asOpt[String];
+            user  <- (json \ "user").asOpt[String];
             project <- (json \ "project").asOpt[String]
-          ) yield (eventId, id, tenant, project)).map { case (eventId, id, tenant, project) =>
+          ) yield (eventId, id, tenant, project, user)).map { case (eventId, id, tenant, project, user) =>
             if (eventType == "FEATURE_CREATED") {
-              FeatureCreated(eventId, id, project, tenant, None)
+              FeatureCreated(eventId, id, project, tenant, user, None)
             } else {
-              FeatureUpdated(eventId, id, project, tenant, None)
+              FeatureUpdated(eventId, id, project, tenant, user, None)
             }
           }
         }
@@ -177,18 +194,21 @@ object EventService {
             eventId <- (json \ "eventId").asOpt[Long];
             id      <- (json \ "id").asOpt[String];
             tenant  <- (json \ "tenant").asOpt[String];
+            user  <- (json \ "user").asOpt[String];
             project <- (json \ "project").asOpt[String]
-          ) yield FeatureDeleted(eventId, id, project, tenant)
+          ) yield FeatureDeleted(eventId, id, project, tenant, user)
         case "TENANT_DELETED"                                    =>
           for (
             eventId <- (json \ "eventId").asOpt[Long];
+            user <- (json \ "user").asOpt[String];
             tenant  <- (json \ "tenant").asOpt[String]
-          ) yield TenantDeleted(eventId, tenant)
+          ) yield TenantDeleted(eventId, tenant, user)
         case "TENANT_CREATED"                                    =>
           for (
             eventId <- (json \ "eventId").asOpt[Long];
+            user  <- (json \ "user").asOpt[String];
             tenant  <- (json \ "tenant").asOpt[String]
-          ) yield TenantCreated(eventId, tenant)
+          ) yield TenantCreated(eventId, tenant, user)
       }
     }.fold(JsError("Failed to read event"): JsResult[IzanamiEvent])(evt => JsSuccess(evt))
   }
@@ -202,13 +222,13 @@ object EventService {
     val logger                                      = env.logger
     implicit val executionContext: ExecutionContext = env.executionContext
     event match {
-      case FeatureDeleted(_, id, _, _)                              => Future.successful(Some(deleteEventV2(id)))
+      case FeatureDeleted(_, id, _, _, _)                              => Future.successful(Some(deleteEventV2(id)))
       case f: ConditionFeatureEvent if f.conditionByContext.isEmpty =>
         Future.successful(Some(deleteEventV2(f.asInstanceOf[FeatureEvent].id)))
       case f: ConditionFeatureEvent                                 => {
         val maybeContextmap = f match {
-          case FeatureCreated(_, _, _, _, map) => map
-          case FeatureUpdated(_, _, _, _, map) => map
+          case FeatureCreated(_, _, _, _, _, map) => map
+          case FeatureUpdated(_, _, _, _, _, map) => map
         }
         Feature.processMultipleStrategyResult(maybeContextmap.get, context, conditions, env).map {
           case Left(error) => {
@@ -217,8 +237,8 @@ object EventService {
           }
           case Right(json) => {
             f match {
-              case FeatureCreated(_, id, _, _, _) => Some(createEventV2(json) ++ Json.obj("id" -> id))
-              case FeatureUpdated(_, id, _, _, _) => Some(updateEventV2(json) ++ Json.obj("id" -> id))
+              case FeatureCreated(_, id, _, _, _, _) => Some(createEventV2(json) ++ Json.obj("id" -> id))
+              case FeatureUpdated(_, id, _, _, _, _) => Some(updateEventV2(json) ++ Json.obj("id" -> id))
             }
           }
         }
@@ -235,7 +255,7 @@ class EventService(env: Env) {
   val sourceMap: scala.collection.mutable.Map[String, SourceDescriptor] =
     scala.collection.mutable.Map()
 
-  def emitEvent(channel: String, event: SourceIzanamiEvent, user: String)(implicit conn: SqlConnection): Future[Unit] = {
+  def emitEvent(channel: String, event: SourceIzanamiEvent)(implicit conn: SqlConnection): Future[Unit] = {
     val global = channel.equalsIgnoreCase("izanami") || event.isInstanceOf[SourceTenantDeleted]
     env.postgresql
       .queryOne(
@@ -289,17 +309,17 @@ class EventService(env: Env) {
                   case JsError(errors)        => logger.error(s"Failed to read event $payload")
                   case JsSuccess(value, path) => {
                     val futureEvent: Future[IzanamiEvent] = value match {
-                      case f @ FeatureCreated(_, id, _, tenant, _) => {
+                      case f @ FeatureCreated(_, id, _, tenant, _, _) => {
                         env.datastores.features
                           .findActivationStrategiesForFeature(tenant, id)
                           .map(maybeConditions => f.copy(conditionByContext = maybeConditions))
                       }
-                      case f @ FeatureUpdated(_, id, _, tenant, _) => {
+                      case f @ FeatureUpdated(_, id, _, tenant, _, _) => {
                         env.datastores.features
                           .findActivationStrategiesForFeature(tenant, id)
                           .map(maybeConditions => f.copy(conditionByContext = maybeConditions))
                       }
-                      case e @ TenantDeleted(_, tenant)            => {
+                      case e @ TenantDeleted(_, tenant, _)            => {
                         killSource(tenant)
                         Future.successful(e)
                       }
