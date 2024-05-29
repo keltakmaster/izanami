@@ -34,6 +34,7 @@ import { useState } from "react";
 import { InvitationForm } from "../components/InvitationForm";
 import { WebhookTransformationEditor } from "../components/Editor";
 import Handlebars from "handlebars";
+import { Row } from "@tanstack/react-table";
 
 export function WebHooks(props: { tenant: string }) {
   const tenant = props.tenant;
@@ -159,7 +160,7 @@ export function WebHooks(props: { tenant: string }) {
               {
                 id: "description",
                 header: () => "Description",
-                size: 25,
+                size: 20,
                 cell: (props: any) => {
                   return <>{props.getValue()}</>;
                 },
@@ -167,19 +168,56 @@ export function WebHooks(props: { tenant: string }) {
               {
                 accessorKey: "url",
                 header: () => "URL",
-                size: 15,
+                size: 25,
               },
               {
-                header: () => "Features",
+                header: () => "Scope",
+                id: "scope",
+                minSize: 200,
                 accessorKey: "features",
-                minSize: 150,
-                size: 15,
+                size: 25,
+                filterFn: (
+                  row: Row<Webhook>,
+                  columnId: string,
+                  filterValue: any
+                ) => {
+                  if (!filterValue || filterValue?.length === 0) {
+                    return true;
+                  }
+                  console.log("filterValue", filterValue);
+                  const featureMatch = Boolean(
+                    row.original?.features?.find(({ name }) =>
+                      name.includes(filterValue)
+                    ) || false
+                  );
+
+                  const projectMatch = Boolean(
+                    row.original?.projects?.find(({ name }) =>
+                      name.includes(filterValue)
+                    ) || false
+                  );
+
+                  return featureMatch || projectMatch;
+                },
                 cell: (info) => {
-                  const arr: { name: string; project: string; id: string }[] =
-                    info.getValue();
+                  const features = info.row.original?.features ?? [];
+                  const projects = info.row.original?.projects ?? [];
+
                   return (
                     <>
-                      {arr.map(({ project, name, id }) => (
+                      {projects.map(({ name, id }) => (
+                        <div key={id}>
+                          <NavLink
+                            className="white-link"
+                            to={`/tenants/${tenant}/projects/${name}`}
+                          >
+                            <i className="fas fa-building" aria-hidden />
+                            &nbsp;
+                            {name}
+                          </NavLink>
+                        </div>
+                      ))}
+                      {features.map(({ project, name, id }) => (
                         <div key={id}>
                           {name} (
                           <NavLink
@@ -190,31 +228,6 @@ export function WebHooks(props: { tenant: string }) {
                             &nbsp;{project}
                           </NavLink>
                           )
-                        </div>
-                      ))}
-                    </>
-                  );
-                },
-              },
-              {
-                header: () => "Projects",
-                accessorKey: "projects",
-                minSize: 150,
-                size: 15,
-                cell: (info) => {
-                  const arr: { name: string; id: string }[] = info.getValue();
-                  return (
-                    <>
-                      {arr.map(({ name, id }) => (
-                        <div key={id}>
-                          <NavLink
-                            className="white-link"
-                            to={`/tenants/${tenant}/projects/${name}`}
-                          >
-                            <i className="fas fa-building" aria-hidden />
-                            &nbsp;
-                            {name}
-                          </NavLink>
                         </div>
                       ))}
                     </>
