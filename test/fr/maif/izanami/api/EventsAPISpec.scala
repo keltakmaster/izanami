@@ -222,7 +222,8 @@ class EventsAPISpec extends BaseAPISpec {
       val jsonData    = Json.parse(evt.data)
       val jsonFeature = (jsonData \ "payload").get
       jsonFeature.toString mustEqual """{"name":"f3","active":false,"project":"project","conditions":{"":{"enabled":false,"conditions":[{"period":{"begin":"2020-01-01T01:00:00Z","end":"2120-01-01T01:00:00Z","hourPeriods":[{"startTime":"09:00:00","endTime":"12:00:00"},{"startTime":"14:00:00","endTime":"18:00:00"}],"activationDays":{"days":["MONDAY","TUESDAY"]},"timezone":"Europe/Paris"},"rule":{"users":["foo","bar"]}},{"period":null,"rule":{"percentage":60}}]}}}"""
-
+      val metadata = (jsonData \ "metadata").get
+      (metadata \ "user").as[String] mustEqual "RESERVED_ADMIN_USER"
     }
 
     "should send feature_created events when feature is created without condition if not required" in {

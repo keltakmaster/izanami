@@ -494,6 +494,39 @@ class WebhookAPISpec extends BaseAPISpec {
       (Json.parse(request2.get._1.getBodyAsString) \ "payload" \ "active").as[Boolean] mustBe true
     }
 
+    "pass authoring user" in {
+      val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
+      val situation = TestSituationBuilder()
+        .loggedInWithAdminRights()
+        .withTenants(
+          TestTenant(tenant)
+            .withProjects(
+              TestProject("project").withFeatures(
+                TestFeature("f1", enabled = false)
+              )
+            )
+            .withWebhooks(
+              TestWebhookByName(
+                name = "test-hook",
+                url = "http://localhost:9996",
+                features = Set((tenant, "project", "f1"))
+              )
+            )
+        )
+        .withWebhookServer(port = 9996, responseCode = OK)
+        .build()
+
+      situation.updateFeatureByName(tenant, "project", "f1", f => f ++ Json.obj("enabled" -> true))
+
+      val requests = awaitRequests(9996, "FEATURE_UPDATED")
+
+      val request = requests.toSeq.find { case (r, _) =>
+        r.getBodyAsString.contains("FEATURE_UPDATED")
+      }.get
+      val body = Json.parse(request._1.getBodyAsString)
+      (body \ "metadata" \ "user").as[String] mustEqual "RESERVED_ADMIN_USER"
+    }
+
     "pass given headers correctly" in {
       val tenant    = s"tenant${UUID.randomUUID().toString.replace("-", "")}"
       val situation = TestSituationBuilder()

@@ -41,7 +41,7 @@ class WebhookListener(env: Env, eventService: EventService) {
 
   def handleGlobalEvent(event: IzanamiEvent): Unit = {
     event match {
-      case TenantCreated(eventId, tenant) => startListening(tenant)
+      case TenantCreated(eventId, tenant, _) => startListening(tenant)
       case _                              => ()
     }
   }

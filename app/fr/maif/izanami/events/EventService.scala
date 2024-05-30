@@ -220,11 +220,12 @@ object EventService {
       env: Env
   ): Future[Option[JsObject]] = {
     val logger                                      = env.logger
+    val user = event.user
     implicit val executionContext: ExecutionContext = env.executionContext
     event match {
-      case FeatureDeleted(_, id, _, _, _)                              => Future.successful(Some(deleteEventV2(id)))
+      case FeatureDeleted(_, id, _, _, _)                              => Future.successful(Some(deleteEventV2(id, user)))
       case f: ConditionFeatureEvent if f.conditionByContext.isEmpty =>
-        Future.successful(Some(deleteEventV2(f.asInstanceOf[FeatureEvent].id)))
+        Future.successful(Some(deleteEventV2(f.asInstanceOf[FeatureEvent].id, user)))
       case f: ConditionFeatureEvent                                 => {
         val maybeContextmap = f match {
           case FeatureCreated(_, _, _, _, _, map) => map
@@ -237,8 +238,8 @@ object EventService {
           }
           case Right(json) => {
             f match {
-              case FeatureCreated(_, id, _, _, _, _) => Some(createEventV2(json) ++ Json.obj("id" -> id))
-              case FeatureUpdated(_, id, _, _, _, _) => Some(updateEventV2(json) ++ Json.obj("id" -> id))
+              case FeatureCreated(_, id, _, _, _, _) => Some(createEventV2(json, user) ++ Json.obj("id" -> id))
+              case FeatureUpdated(_, id, _, _, _, _) => Some(updateEventV2(json, user) ++ Json.obj("id" -> id))
             }
           }
         }
