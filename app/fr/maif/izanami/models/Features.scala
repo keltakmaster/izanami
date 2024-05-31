@@ -2,12 +2,14 @@ package fr.maif.izanami.models
 
 import fr.maif.izanami.env.Env
 import fr.maif.izanami.errors.IzanamiError
+import fr.maif.izanami.models.Feature.{featureRead, featureWrite, readFeature}
 import fr.maif.izanami.utils.syntax.implicits.{BetterJsValue, BetterSyntax}
 import fr.maif.izanami.v1.{OldFeature, OldGlobalScriptFeature, OldScript}
 import fr.maif.izanami.v1.OldFeature.{oldFeatureReads, oldFeatureWrites}
 import fr.maif.izanami.wasm.{WasmConfig, WasmUtils}
 import fr.maif.izanami.web.FeatureContextPath
-import play.api.libs.json.Reads.instantReads
+import play.api.libs.json.MapWrites.mapWrites
+import play.api.libs.json.Reads.{instantReads, mapReads}
 import play.api.libs.json._
 import play.api.mvc.QueryStringBindable
 
@@ -26,9 +28,9 @@ sealed trait PatchPathField
 case object Replace extends PatchOperation
 case object Remove  extends PatchOperation
 
-case object Enabled extends PatchPathField
+case object Enabled        extends PatchPathField
 case object ProjectFeature extends PatchPathField
-case object TagsFeature extends PatchPathField
+case object TagsFeature    extends PatchPathField
 
 case object RootFeature extends PatchPathField
 
@@ -61,17 +63,18 @@ case class RemoveFeaturePatch(id: String) extends FeaturePatch {
 object FeaturePatch {
   val ENABLED_PATH_PATTERN: Regex = "^/(?<id>\\S+)/enabled$".r
   val PROJECT_PATH_PATTERN: Regex = "^/(?<id>\\S+)/project$".r
-  val TAGS_PATH_PATTERN: Regex = "^/(?<id>\\S+)/tags$".r
+  val TAGS_PATH_PATTERN: Regex    = "^/(?<id>\\S+)/tags$".r
   val FEATURE_PATH_PATTERN: Regex = "^/(?<id>\\S+)$".r
 
   implicit val patchPathReads: Reads[PatchPath] = Reads[PatchPath] { json =>
     json
       .asOpt[String]
-      .map { case ENABLED_PATH_PATTERN(id) =>
-        PatchPath(id, Enabled)
-      case PROJECT_PATH_PATTERN(id) => PatchPath(id, ProjectFeature)
-      case TAGS_PATH_PATTERN(id) => PatchPath(id, TagsFeature)
-      case FEATURE_PATH_PATTERN(id) => PatchPath(id, RootFeature)
+      .map {
+        case ENABLED_PATH_PATTERN(id) =>
+          PatchPath(id, Enabled)
+        case PROJECT_PATH_PATTERN(id) => PatchPath(id, ProjectFeature)
+        case TAGS_PATH_PATTERN(id)    => PatchPath(id, TagsFeature)
+        case FEATURE_PATH_PATTERN(id) => PatchPath(id, RootFeature)
       }
       .map(path => JsSuccess(path))
       .getOrElse(JsError("Bad patch path"))
@@ -89,17 +92,48 @@ object FeaturePatch {
   }
 
   implicit val featurePatchReads: Reads[FeaturePatch] = Reads[FeaturePatch] { json =>
-    val maybeResult = for (
-      op <- (json \ "op").asOpt[PatchOperation];
-      path <- (json \ "path").asOpt[PatchPath]
-    ) yield (op, path) match {
-      case (Replace, PatchPath(id, Enabled)) => (json \ "value").asOpt[Boolean].map(b => EnabledFeaturePatch(b, id))
-      case (Replace, PatchPath(id, ProjectFeature)) => (json \ "value").asOpt[String].map(b => ProjectFeaturePatch(b, id))
-      case (Replace, PatchPath(id, TagsFeature)) => (json \ "value").asOpt[Set[String]].map(b => TagsFeaturePatch(b, id))
-      case (Remove, PatchPath(id, RootFeature)) => Some(RemoveFeaturePatch(id))
-      case (_,_) => None
-    }
+    val maybeResult =
+      for (
+        op   <- (json \ "op").asOpt[PatchOperation];
+        path <- (json \ "path").asOpt[PatchPath]
+      ) yield (op, path) match {
+        case (Replace, PatchPath(id, Enabled))        => (json \ "value").asOpt[Boolean].map(b => EnabledFeaturePatch(b, id))
+        case (Replace, PatchPath(id, ProjectFeature)) =>
+          (json \ "value").asOpt[String].map(b => ProjectFeaturePatch(b, id))
+        case (Replace, PatchPath(id, TagsFeature))    =>
+          (json \ "value").asOpt[Set[String]].map(b => TagsFeaturePatch(b, id))
+        case (Remove, PatchPath(id, RootFeature))     => Some(RemoveFeaturePatch(id))
+        case (_, _)                                   => None
+      }
     maybeResult.flatten.map(r => JsSuccess(r)).getOrElse(JsError("Failed to read patch operation"))
+  }
+}
+
+case class FeatureWithOverloads(featureMap: Map[String, AbstractFeature]) {
+  def id: String = featureMap("").id
+  def baseFeature(): AbstractFeature = featureMap("")
+  def setProject(project: String): FeatureWithOverloads = copy(featureMap=featureMap.view.mapValues(f => f.withProject(project)).toMap)
+  def setEnabling(enabling: Boolean): FeatureWithOverloads = setEnablingForContext(enabling, "")
+  def setFeature(feature: AbstractFeature): FeatureWithOverloads = setFeatureForContext(feature, "")
+  def setEnablingForContext(enabling: Boolean, context: String): FeatureWithOverloads = featureMap
+    .get(context)
+    .map(f => f.withEnabled(true))
+    .map(f => copy(featureMap + (context -> f)))
+    .getOrElse(this)
+  def setFeatureForContext(feature: AbstractFeature, context: String): FeatureWithOverloads = copy(featureMap=featureMap + (context -> feature))
+  def removeOverload(context: String): FeatureWithOverloads = copy(featureMap = featureMap - context)
+  def updateConditionsForContext(context: String, contextualFeatureStrategy: ContextualFeatureStrategy): FeatureWithOverloads = featureMap
+    .get(context).map(f => f.withStrategy(strategy = contextualFeatureStrategy)).map(f => copy(featureMap=featureMap + (context -> f))).getOrElse(this)
+}
+
+object FeatureWithOverloads {
+  def apply(feature: AbstractFeature): FeatureWithOverloads = FeatureWithOverloads(Map("" -> feature))
+  val featureWithOverloadWrite: Writes[FeatureWithOverloads] = obj =>
+    Json.toJson(obj.featureMap)(Writes.map(featureWrite))
+
+  val featureWithOverloadRead: Reads[FeatureWithOverloads] = Reads[FeatureWithOverloads] { json =>
+    json.asOpt[Map[String, AbstractFeature]](Reads.map(featureRead)).map(m => FeatureWithOverloads(m))
+      .fold(JsError("Failed to read FeatureWithOverloads"):JsResult[FeatureWithOverloads])(f => JsSuccess(f))
   }
 }
 
@@ -179,7 +213,7 @@ case class RequestContext(
     now: Instant = Instant.now(),
     data: JsObject = Json.obj()
 ) {
-  def wasmJson: JsValue = Json.obj("tenant" -> tenant, "id" -> user, "now" -> now.toEpochMilli, "data" -> data)
+  def wasmJson: JsValue       = Json.obj("tenant" -> tenant, "id" -> user, "now" -> now.toEpochMilli, "data" -> data)
   def contextAsString: String = context.elements.mkString("_")
 }
 sealed trait ActivationRule extends LegacyCompatibleCondition {
@@ -214,6 +248,20 @@ sealed trait AbstractFeature {
   def withProject(project: String): AbstractFeature
   def withId(id: String): AbstractFeature
   def withName(name: String): AbstractFeature
+  def withEnabled(enable: Boolean): AbstractFeature
+  def withStrategy(strategy: ContextualFeatureStrategy): AbstractFeature = {
+    strategy match {
+      case ClassicalFeatureStrategy(enabled, conditions, _) => Feature(id=id, name=name, description=description, project=project, enabled=enabled, tags=tags, metadata=metadata, conditions = conditions)
+      case WasmFeatureStrategy(enabled, wasmConfig, _) => WasmFeature(id=id, name=name, description=description, project=project, enabled=enabled, tags=tags, metadata=metadata, wasmConfig = wasmConfig)
+    }
+  }
+  def hasSameActivationStrategy(another: AbstractFeature): Boolean = (this, another) match {
+    case (f1, f2) if (f1.enabled != f2.enabled) => false
+    case (f1: Feature, f2: Feature) => f1.conditions == f2.conditions
+    case (f1: WasmFeature, f2: WasmFeature) => f1.wasmConfig == f2.wasmConfig
+    case (f1: SingleConditionFeature, f2: SingleConditionFeature) => f1.condition == f2.condition
+    case _ => false
+  }
 }
 
 case class SingleConditionFeature(
@@ -226,6 +274,8 @@ case class SingleConditionFeature(
     override val metadata: JsObject = JsObject.empty,
     override val description: String
 ) extends AbstractFeature {
+
+  override def withEnabled(enabled: Boolean): SingleConditionFeature = copy(enabled = enabled)
 
   def toModernFeature: Feature = {
     val activationCondition = this.condition match {
@@ -270,6 +320,7 @@ case class Feature(
     override val metadata: JsObject = JsObject.empty,
     override val description: String
 ) extends AbstractFeature {
+  override def withEnabled(enabled: Boolean): Feature = copy(enabled = enabled)
   override def active(requestContext: RequestContext, env: Env): Future[Either[IzanamiError, Boolean]] = {
     implicit val ec: ExecutionContext = env.executionContext
     Future(Right { enabled && (conditions.isEmpty || conditions.exists(cond => cond.active(requestContext, name))) })
@@ -290,6 +341,7 @@ case class WasmFeature(
     override val metadata: JsObject = JsObject.empty,
     override val description: String
 ) extends AbstractFeature {
+  override def withEnabled(enabled: Boolean): WasmFeature = copy(enabled = enabled)
   override def active(requestContext: RequestContext, env: Env): Future[Either[IzanamiError, Boolean]] = {
     implicit val ec: ExecutionContext = env.executionContext
     if (!enabled) {
@@ -450,34 +502,55 @@ object Feature {
     hash <= percentage
   }
 
-
-  def processMultipleStrategyResult(strategyByCtx: Map[String, AbstractFeature], requestContext: RequestContext, conditions: Boolean, env: Env): Future[Either[IzanamiError, JsObject]] = {
-    val context = requestContext.context.elements.mkString("_")
+  def processMultipleStrategyResult(
+      strategyByCtx: Map[String, AbstractFeature],
+      requestContext: RequestContext,
+      conditions: Boolean,
+      env: Env
+  ): Future[Either[IzanamiError, JsObject]] = {
+    val context       = requestContext.context.elements.mkString("_")
     val strategyToUse = if (context.isBlank) {
       strategyByCtx("")
     } else {
-      strategyByCtx.filter { case (ctx, f) => context.startsWith(ctx) }
-        .toSeq.sortWith {
+      strategyByCtx
+        .filter { case (ctx, f) => context.startsWith(ctx) }
+        .toSeq
+        .sortWith {
           case ((c1, _), (c2, _)) if c1.length < c2.length => false
-          case _ => true
-        }.headOption.map(_._2).getOrElse(strategyByCtx(""))
+          case _                                           => true
+        }
+        .headOption
+        .map(_._2)
+        .getOrElse(strategyByCtx(""))
     }
 
-
-    val jsonStrategies = Json.toJson(strategyByCtx.map { case (ctx, feature) => {
-      (ctx.replace("_", "/"), (feature match {
-        case w: WasmFeature => Feature.featureWrite.writes(w).as[JsObject] - "wasmConfig" - "tags" - "name" - "description" - "id" - "project" ++ Json.obj("wasmConfig" -> Json.obj("name" -> w.wasmConfig.name))
-        case lf: SingleConditionFeature => Feature.featureWrite.writes(lf.toModernFeature).as[JsObject] - "tags" - "name" - "description" - "id" - "project"
-        case f => Feature.featureWrite.writes(f).as[JsObject]
-      }) - "metadata" - "tags" - "name" - "description" - "id" - "project")
-    }
-    }).as[JsObject]
+    val jsonStrategies = Json
+      .toJson(strategyByCtx.map {
+        case (ctx, feature) => {
+          (
+            ctx.replace("_", "/"),
+            (feature match {
+              case w: WasmFeature             =>
+                Feature.featureWrite
+                  .writes(w)
+                  .as[JsObject] - "wasmConfig" - "tags" - "name" - "description" - "id" - "project" ++ Json
+                  .obj("wasmConfig" -> Json.obj("name" -> w.wasmConfig.name))
+              case lf: SingleConditionFeature =>
+                Feature.featureWrite
+                  .writes(lf.toModernFeature)
+                  .as[JsObject] - "tags" - "name" - "description" - "id" - "project"
+              case f                          => Feature.featureWrite.writes(f).as[JsObject]
+            }) - "metadata" - "tags" - "name" - "description" - "id" - "project"
+          )
+        }
+      })
+      .as[JsObject]
 
     writeFeatureForCheck(strategyToUse, requestContext, env = env)
       .map {
-        case Left(err) => Left(err)
-        case Right(json) if conditions =>  Right(json ++ Json.obj("conditions" -> jsonStrategies))
-        case Right(json) => Right(json)
+        case Left(err)                 => Left(err)
+        case Right(json) if conditions => Right(json ++ Json.obj("conditions" -> jsonStrategies))
+        case Right(json)               => Right(json)
       }(env.executionContext)
   }
 
@@ -512,7 +585,7 @@ object Feature {
     feature
       .active(context, env)
       .map {
-        case Left(error) => Left(error)
+        case Left(error)   => Left(error)
         case Right(active) => Right(Some(writeFeatureInLegacyFormat(feature) ++ Json.obj("active" -> active)))
       }(env.executionContext)
   }
@@ -628,19 +701,24 @@ object Feature {
     )
   }
 
+  val featureRead: Reads[AbstractFeature] = json => {
+    readFeature(json)
+  }
+
   val featureWrite: Writes[AbstractFeature] = Writes[AbstractFeature] {
-    case Feature(id, name, project, conditions, enabled, tags, metadata, description)               => {
-      Json.obj(
-        "name"        -> name,
-        "enabled"     -> enabled,
-        "metadata"    -> metadata,
-        "tags"        -> tags,
-        "conditions"  -> conditions,
-        "id"          -> id,
-        "project"     -> project,
-        "description" -> description
-      )
-    }
+    case Feature(id, name, project, conditions, enabled, tags, metadata, description) =>
+      {
+        Json.obj(
+          "name"        -> name,
+          "enabled"     -> enabled,
+          "metadata"    -> metadata,
+          "tags"        -> tags,
+          "conditions"  -> conditions,
+          "id"          -> id,
+          "project"     -> project,
+          "description" -> description
+        )
+      }
     case WasmFeature(id, name, project, enabled, wasmConfig, tags, metadata, description)           => {
       Json.obj(
         "name"        -> name,

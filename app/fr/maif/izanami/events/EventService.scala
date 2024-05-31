@@ -6,11 +6,12 @@ import akka.stream.{KillSwitches, Materializer, SharedKillSwitch}
 import fr.maif.izanami.env.Env
 import fr.maif.izanami.env.pgimplicits.{EnhancedRow, VertxFutureEnhancer}
 import fr.maif.izanami.events.EventService.{eventFormat, sourceEventWrites}
-import fr.maif.izanami.models.{AbstractFeature, Feature, RequestContext}
+import fr.maif.izanami.models.{AbstractFeature, Feature, FeatureWithOverloads, RequestContext}
 import io.vertx.pgclient.pubsub.PgSubscriber
 import io.vertx.sqlclient.SqlConnection
 import play.api.libs.json.{Format, JsError, JsNumber, JsObject, JsResult, JsSuccess, JsValue, Json, Writes}
 import fr.maif.izanami.models.Feature.featureWrite
+import fr.maif.izanami.models.FeatureWithOverloads.featureWithOverloadWrite
 import fr.maif.izanami.utils.syntax.implicits.BetterJsValue
 import fr.maif.izanami.v1.V2FeatureEvents.{createEventV2, deleteEventV2, updateEventV2}
 import play.api.Logger
@@ -26,24 +27,22 @@ sealed trait SourceFeatureEvent                                              ext
   val project: String
   val tenant: String
 }
-// Condition by contetx is an option since feature may have been deleted between emission and reception of the event
-sealed trait SourceConditionFeatureEvent                                     extends SourceFeatureEvent {
-  val conditionByContext: Option[Map[String, AbstractFeature]]
-}
+
 case class SourceFeatureCreated(
     id: String,
     project: String,
     tenant: String,
     override val user: String,
-    conditionByContext: Option[Map[String, AbstractFeature]] = None
-)                                                                            extends SourceConditionFeatureEvent
+    feature: FeatureWithOverloads
+)                                                                            extends SourceFeatureEvent
 case class SourceFeatureUpdated(
     id: String,
     project: String,
     tenant: String,
     override val user: String,
-    conditionByContext: Option[Map[String, AbstractFeature]] = None
-)                                                                            extends SourceConditionFeatureEvent
+    previous: FeatureWithOverloads,
+    feature: FeatureWithOverloads
+)                                                                            extends SourceFeatureEvent
 case class SourceFeatureDeleted(id: String, project: String, tenant: String, override val user: String) extends SourceFeatureEvent
 case class SourceTenantDeleted(tenant: String, override val user: String)                               extends SourceIzanamiEvent
 
@@ -101,25 +100,26 @@ case class SourceDescriptor(
 
 object EventService {
   val IZANAMI_CHANNEL = "izanami"
+  implicit val fWrite: Writes[FeatureWithOverloads] = featureWithOverloadWrite
 
   implicit val sourceEventWrites: Writes[SourceIzanamiEvent] = {
-    case SourceFeatureCreated(id, project, tenant, user, conditions) =>
+    case SourceFeatureCreated(id, project, tenant, user, feature) =>
       Json.obj(
         "id"         -> id,
         "project"    -> project,
         "tenant"     -> tenant,
-        "conditions" -> conditions,
         "user" -> user,
-        "type"       -> "FEATURE_CREATED"
+        "type"       -> "FEATURE_CREATED",
+        "feature" -> feature
       )
-    case SourceFeatureUpdated(id, project, tenant, user, conditions) =>
+    case SourceFeatureUpdated(id, project, tenant, user, previousFeature, feature) =>
       Json.obj(
         "id"         -> id,
         "project"    -> project,
         "tenant"     -> tenant,
         "user" -> user,
-        "conditions" -> conditions,
-        "type"       -> "FEATURE_UPDATED"
+        "type"       -> "FEATURE_UPDATED",
+        "feature" -> feature
       )
     case SourceFeatureDeleted(id, project, user, tenant)             =>
       Json.obj(

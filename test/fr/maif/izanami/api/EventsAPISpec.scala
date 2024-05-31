@@ -354,7 +354,7 @@ class EventsAPISpec extends BaseAPISpec {
       )
       Thread.sleep(2000)
 
-      situation.changeFeatureStrategyForContext(
+      val res = situation.changeFeatureStrategyForContext(
         tenant = tenant,
         project = "project",
         contextPath = "prod",

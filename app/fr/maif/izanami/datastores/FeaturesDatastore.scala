@@ -2,11 +2,21 @@ package fr.maif.izanami.datastores
 
 import fr.maif.izanami.datastores.featureImplicits.FeatureRow
 import fr.maif.izanami.env.Env
-import fr.maif.izanami.env.PostgresqlErrors.{FOREIGN_KEY_VIOLATION, NOT_NULL_VIOLATION, RELATION_DOES_NOT_EXISTS, UNIQUE_VIOLATION}
+import fr.maif.izanami.env.PostgresqlErrors.{
+  FOREIGN_KEY_VIOLATION,
+  NOT_NULL_VIOLATION,
+  RELATION_DOES_NOT_EXISTS,
+  UNIQUE_VIOLATION
+}
 import fr.maif.izanami.env.pgimplicits.EnhancedRow
 import fr.maif.izanami.errors._
 import fr.maif.izanami.events.{EventService, SourceFeatureCreated, SourceFeatureDeleted, SourceFeatureUpdated}
-import fr.maif.izanami.models.Feature.{activationConditionRead, activationConditionWrite, legacyActivationConditionRead, legacyCompatibleConditionWrites}
+import fr.maif.izanami.models.Feature.{
+  activationConditionRead,
+  activationConditionWrite,
+  legacyActivationConditionRead,
+  legacyCompatibleConditionWrites
+}
 import fr.maif.izanami.models._
 import fr.maif.izanami.utils.Datastore
 import fr.maif.izanami.utils.syntax.implicits.{BetterJsValue, BetterListEither, BetterSyntax}
@@ -29,6 +39,22 @@ import scala.concurrent.Future
 import scala.reflect.ClassTag
 
 class FeaturesDatastore(val env: Env) extends Datastore {
+
+  def findActivationStrategiesForFeatureByName(
+      tenant: String,
+      name: String,
+      project: String
+  ): Future[Option[Map[String, AbstractFeature]]] = {
+    env.postgresql
+      .queryOne(s"""SELECT f.id FROM features f where project=$$1 AND name=$$2""", List(project, name), schemas=Set(tenant)) { r =>
+        r.optString("id")
+      }
+      .flatMap {
+        case None     => None.future
+        case Some(id) => findActivationStrategiesForFeature(tenant, id)
+      }
+  }
+
   def findActivationStrategiesForFeature(
       tenant: String,
       id: String
@@ -136,6 +162,109 @@ class FeaturesDatastore(val env: Env) extends Datastore {
     }
   }
 
+  def findActivationStrategiesForFeatures(
+      tenant: String,
+      ids: Set[String]
+  ): Future[Map[String, Map[String, AbstractFeature]]] = {
+    env.postgresql
+      .queryAll(
+        s"""SELECT
+         |    f.id,
+         |    f.name,
+         |    f.enabled,
+         |    f.project,
+         |    f.conditions,
+         |    f.description,
+         |    f.metadata,
+         |    w.config as wasm,
+         |    w.id as script_id,
+         |    COALESCE(json_agg(t.id) FILTER(WHERE t.id IS NOT NULL), '[]'::json) as tags,
+         |    COALESCE(
+         |        json_object_agg(
+         |            fcs.context_path, json_build_object(
+         |                'enabled', fcs.enabled,
+         |                'conditions', fcs.conditions,
+         |                'wasm', ow.config
+         |            )
+         |        ) FILTER(WHERE fcs.enabled IS NOT NULL), '{}'::json
+         |    )
+         |    AS overloads
+         |FROM features f
+         |LEFT JOIN feature_contexts_strategies fcs ON fcs.feature = f.name
+         |LEFT JOIN features_tags ft ON ft.feature = f.id
+         |LEFT JOIN tags t ON ft.tag = t.name
+         |LEFT JOIN wasm_script_configurations w ON w.id=f.script_config
+         |LEFT JOIN wasm_script_configurations ow ON ow.id=fcs.script_config
+         |WHERE f.id=ANY($$1)
+         |GROUP BY f.id, w.id""".stripMargin,
+        params = List(ids.toArray),
+        schemas = Set(tenant)
+      ) { r =>
+        {
+          val maybeTuple = r
+            .optFeature()
+            .map(feature => {
+              val overloadByContext: Map[String, AbstractFeature] = r
+                .optJsObject("overloads")
+                .map(overloads => {
+                  overloads.keys.map(context => {
+                    (overloads \ context)
+                      .asOpt[JsObject]
+                      .flatMap(json => {
+                        (json \ "enabled")
+                          .asOpt[Boolean]
+                          .map(enabled => {
+                            val maybeConditions              = (json \ "conditions")
+                              .asOpt[JsArray]
+                              .map(arr => arr.value.map(v => v.as[ActivationCondition]).toSet)
+                            val maybeScriptName              = (json \ "wasm").asOpt[JsObject]
+                            val r: (String, AbstractFeature) = (
+                              context,
+                              maybeConditions
+                                .map(conditions =>
+                                  Feature(
+                                    id = feature.id,
+                                    name = feature.name,
+                                    project = feature.project,
+                                    conditions = conditions,
+                                    enabled = enabled,
+                                    tags = feature.tags,
+                                    metadata = feature.metadata,
+                                    description = feature.description
+                                  )
+                                )
+                                .orElse(
+                                  maybeScriptName.map(scriptConfig =>
+                                    WasmFeature(
+                                      id = feature.id,
+                                      name = feature.name,
+                                      project = feature.project,
+                                      wasmConfig = WasmConfig.format.reads(scriptConfig).get,
+                                      enabled = enabled,
+                                      tags = feature.tags,
+                                      metadata = feature.metadata,
+                                      description = feature.description
+                                    )
+                                  )
+                                )
+                                .getOrElse(throw new RuntimeException("Bad feature format in DB"))
+                            )
+                            r
+                          })
+                      })
+                  })
+                })
+                .getOrElse(Set())
+                .flatMap(_.toSeq)
+                .toMap
+              (feature.id, overloadByContext + ("" -> feature))
+            })
+          maybeTuple
+        }
+      }
+      .map(l => l.toMap)
+  }
+
   def findFeatureMatching(
       tenant: String,
       pattern: String,
@@ -186,123 +315,135 @@ class FeaturesDatastore(val env: Env) extends Datastore {
   }
 
   def applyPatch(tenant: String, operations: Seq[FeaturePatch], user: String): Future[Unit] = {
-    env.postgresql.executeInTransaction(
-      implicit conn => {
-        val eventualId: Future[Unit] = Future
-          .sequence(operations.map {
-            case EnabledFeaturePatch(value, id) => {
-              env.postgresql
-                .queryOne(
-                  s"""UPDATE features SET enabled=$$1 WHERE id=$$2 RETURNING id, name, project, enabled""",
-                  List(java.lang.Boolean.valueOf(value), id),
-                  conn = Some(conn)
-                ) { r =>
-                  for (
-                    id      <- r.optString("id");
-                    name    <- r.optString("name");
-                    project <- r.optString("project");
-                    enabled <- r.optBoolean("enabled")
-                  ) yield (id, name, project, enabled)
-                }
-                .flatMap {
-                  case Some((id, name, project, enabled)) =>
-                    env.eventService.emitEvent(
-                      channel=tenant,
-                      event=SourceFeatureUpdated(id=id, project=project, tenant=tenant, user=user)
-                    )
-                  case None                               => Future.successful(())
-                }
-            }
-            case ProjectFeaturePatch(value, id) => {
-              env.postgresql
-                .queryOne(
-                  s"""UPDATE features SET project=$$1 WHERE id=$$2 RETURNING id, name, project, enabled""",
-                  List(value, id),
-                  conn = Some(conn)
-                ) { r =>
-                  for (
-                    id      <- r.optString("id");
-                    name    <- r.optString("name");
-                    project <- r.optString("project");
-                    enabled <- r.optBoolean("enabled")
-                  ) yield (id, name, project, enabled)
-                }
-                .flatMap {
-                  case Some((id, name, project, enabled)) =>
-                    env.eventService.emitEvent(
-                      channel=tenant,
-                      event=SourceFeatureUpdated(id=id,
-                      project=project,
-                      tenant=tenant,
-                      user=user)
-                    )(conn)
-                  case None                               => Future.successful(())
-                }
-            }
-            case TagsFeaturePatch(value, id) =>
-              findById(tenant, id).flatMap {
-                case Right(Some(oldFeature)) =>
-                  env.datastores.tags
-                    .readTags(tenant, value).flatMap {
-                      case tags if tags.size < value.size => {
-                        val existingTagNames = tags.map(_.name).toSet
-                        val tagsToCreate = value.diff(existingTagNames)
-                        env.datastores.tags.createTags(tagsToCreate.map(tag => TagCreationRequest(name = tag)).toList, tenant, conn=Some(conn))
-                      }
-                      case tags => Right(tags).toFuture
-                    }.flatMap(_ => {
-                      env.postgresql
-                        .queryOne(
-                          s"""delete from features_tags where feature=$$1""",
-                          List(id),
-                          conn = Some(conn)
-                        ) { _ => Some(id) }
-                      insertIntoFeatureTags(tenant, id, value, Some(conn)).map {
-                        case Left(error) => Future.successful(Left(error))
-                        case _ => env.eventService.emitEvent(
+    val featureToUpdateIds = operations.collect {
+      case p: EnabledFeaturePatch => p.id
+      case p: ProjectFeaturePatch => p.id
+    }.toSet
+
+    findActivationStrategiesForFeatures(tenant, featureToUpdateIds)
+      .flatMap(oldFeatures => {
+        env.postgresql.executeInTransaction(
+          implicit conn => {
+            Future
+              .sequence(operations.map {
+                case EnabledFeaturePatch(value, id) => {
+                  env.postgresql
+                    .queryOne(
+                      s"""UPDATE features SET enabled=$$1 WHERE id=$$2 RETURNING id, name, project, enabled""",
+                      List(java.lang.Boolean.valueOf(value), id),
+                      conn = Some(conn)
+                    ) { r =>
+                      for (
+                        id      <- r.optString("id");
+                        name    <- r.optString("name");
+                        project <- r.optString("project");
+                        enabled <- r.optBoolean("enabled")
+                      ) yield (id, name, project, enabled)
+                    }
+                    .flatMap {
+                      case Some((id, name, project, enabled)) =>
+                        env.eventService.emitEvent(
                           channel = tenant,
                           event = SourceFeatureUpdated(
                             id = id,
-                            project = oldFeature.project,
+                            project = project,
                             tenant = tenant,
-                            user=user)
-                        )(conn)
-                      }
+                            user = user,
+                            previous = FeatureWithOverloads(oldFeatures(id)),
+                            feature = FeatureWithOverloads(oldFeatures(id)).setEnabling(value)
+                          )
+                        )
+                      case None                               => Future.successful(())
                     }
-                    )
-                case Left(err) => Future.successful(Left(err))
-                case Right(None) => Future.successful(Left(FeatureDoesNotExist(name=id)))
-              }
-
-            case RemoveFeaturePatch(id) => {
-              env.postgresql
-                .queryOne(
-                  s"""DELETE FROM features WHERE id=$$1 RETURNING id, name, project, enabled""",
-                  List(id),
-                  conn = Some(conn)
-                ) { r =>
-                  for (
-                    id      <- r.optString("id");
-                    name    <- r.optString("name");
-                    project <- r.optString("project");
-                    enabled <- r.optBoolean("enabled")
-                  ) yield (id, name, project, enabled)
                 }
-                .flatMap {
-                  case Some((id, name, project, enabled)) =>
-                    env.eventService.emitEvent(
-                      channel = tenant,
-                      event = SourceFeatureDeleted(id = id, project = project, tenant = tenant, user = user)
-                    )(conn)
-                  case None                               => Future.successful(())
+                case ProjectFeaturePatch(value, id) => {
+                  env.postgresql
+                    .queryOne(
+                      s"""UPDATE features SET project=$$1 WHERE id=$$2 RETURNING id, name, project, enabled""",
+                      List(value, id),
+                      conn = Some(conn)
+                    ) { r =>
+                      for (
+                        id      <- r.optString("id");
+                        name    <- r.optString("name");
+                        project <- r.optString("project");
+                        enabled <- r.optBoolean("enabled")
+                      ) yield (id, name, project, enabled)
+                    }
+                    .flatMap {
+                      case Some((id, name, project, enabled)) =>
+                        env.eventService.emitEvent(
+                          channel = tenant,
+                          event = SourceFeatureUpdated(
+                            id = id,
+                            project = project,
+                            tenant = tenant,
+                            user = user,
+                            previous = FeatureWithOverloads(oldFeatures(id)),
+                            feature = FeatureWithOverloads(oldFeatures(id)).setProject(value)
+                          )
+                        )(conn)
+                      case None                               => Future.successful(())
+                    }
                 }
-            }
-          })
-          .map(_ => ())
-        eventualId
-      },
-      schemas = Set(tenant)
-    )
+                case TagsFeaturePatch(value, id)    =>
+                  findById(tenant, id).flatMap {
+                    case Right(Some(oldFeature)) =>
+                      env.datastores.tags
+                        .readTags(tenant, value)
+                        .flatMap {
+                          case tags if tags.size < value.size => {
+                            val existingTagNames = tags.map(_.name).toSet
+                            val tagsToCreate     = value.diff(existingTagNames)
+                            env.datastores.tags.createTags(
+                              tagsToCreate.map(tag => TagCreationRequest(name = tag)).toList,
+                              tenant,
+                              conn = Some(conn)
+                            )
+                          }
+                          case tags                           => Right(tags).toFuture
+                        }
+                        .flatMap(_ => {
+                          env.postgresql
+                            .queryOne(
+                              s"""delete from features_tags where feature=$$1""",
+                              List(id),
+                              conn = Some(conn)
+                            ) { _ => Some(id) }
+                            .flatMap(maybeId => insertIntoFeatureTags(tenant, id, value, Some(conn)))
+                        })
+                    case Left(err)               => Future.successful(Left(err))
+                    case Right(None)             => Future.successful(Left(FeatureDoesNotExist(name = id)))
+                  }
+                case RemoveFeaturePatch(id)         => {
+                  env.postgresql
+                    .queryOne(
+                      s"""DELETE FROM features WHERE id=$$1 RETURNING id, name, project, enabled""",
+                      List(id),
+                      conn = Some(conn)
+                    ) { r =>
+                      for (
+                        id      <- r.optString("id");
+                        name    <- r.optString("name");
+                        project <- r.optString("project");
+                        enabled <- r.optBoolean("enabled")
+                      ) yield (id, name, project, enabled)
+                    }
+                    .flatMap {
+                      case Some((id, name, project, enabled)) =>
+                        env.eventService.emitEvent(
+                          channel = tenant,
+                          event = SourceFeatureDeleted(id = id, project = project, tenant = tenant, user = user)
+                        )(conn)
+                      case None                               => Future.successful(())
+                    }
+                }
+              })
+              .map(_ => ())
+          },
+          schemas = Set(tenant)
+        )
+      })
   }
 
   def findByIdForKey(
@@ -1001,24 +1142,37 @@ class FeaturesDatastore(val env: Env) extends Datastore {
         case Right(ids)   =>
           Future
             .sequence(features.map(f => insertIntoFeatureTags(tenant, f.id, f.tags, conn.some)))
-            .map(eithers => eithers.toEitherList.map(_ => ids))
+            .map(eithers => eithers.toEitherList.map(_ => features))
       }
       .flatMap {
-        case Left(errors) => Future.successful(Left(errors))
-        case Right(ids)   => {
+        case Left(errors)    => Future.successful(Left(errors))
+        case Right(features) => {
           Future
-            .sequence(ids.map { case (id, project) =>
-              env.eventService.emitEvent(
-                channel = tenant,
-                event = SourceFeatureCreated(id = id, project = project, tenant = tenant, user = user)
-              )(conn)
-            })
+            .sequence(
+              features.map(f =>
+                env.eventService.emitEvent(
+                  channel = tenant,
+                  event = SourceFeatureCreated(
+                    id = f.id,
+                    project = f.project,
+                    tenant = tenant,
+                    user = user,
+                    feature = FeatureWithOverloads(f)
+                  )
+                )(conn)
+              )
+            )
             .map(_ => Right(()))
         }
       }
   }
 
-  def create(tenant: String, project: String, feature: AbstractFeature, user: String): Future[Either[IzanamiError, String]] = {
+  def create(
+      tenant: String,
+      project: String,
+      feature: AbstractFeature,
+      user: String
+  ): Future[Either[IzanamiError, String]] = {
     env.postgresql.executeInTransaction(
       implicit conn => doCreate(tenant, project, feature, conn, user),
       schemas = Set(tenant)
@@ -1299,123 +1453,152 @@ class FeaturesDatastore(val env: Env) extends Datastore {
       .flatMap {
         case Left(error) => Future.successful(Left(error))
         case Right(id)   =>
-          env.eventService.emitEvent(
-            channel = tenant,
-            event = SourceFeatureCreated(id = id, project = project, tenant = tenant, user = user)
-          )(conn)
-          .map(_ =>
-            Right(id)
-          )
+          env.eventService
+            .emitEvent(
+              channel = tenant,
+              event = SourceFeatureCreated(
+                id = id,
+                project = project,
+                tenant = tenant,
+                user = user,
+                feature = FeatureWithOverloads(feature)
+              )
+            )(conn)
+            .map(_ => Right(id))
       }
   }
 
-  def update(tenant: String, id: String, feature: AbstractFeature, user: String): Future[Either[IzanamiError, String]] = {
+  def update(
+      tenant: String,
+      id: String,
+      feature: AbstractFeature,
+      user: String
+  ): Future[Either[IzanamiError, String]] = {
     // TODO allow updating metadata
-    env.postgresql.executeInTransaction(
-      conn => {
-        val (request, params) = feature match {
-          case SingleConditionFeature(id, name, project, conditions, enabled, tags, metadata, description) =>
-            (
-              s"""update features
-                 |SET name=$$1, enabled=$$2, conditions=$$3, script_config=NULL, description=$$5, project=$$6 WHERE id=$$4 returning id""".stripMargin,
-              List(
-                name,
-                java.lang.Boolean.valueOf(enabled),
-                new JsonObject(Json.toJson(conditions).toString()),
-                id,
-                description,
-                project
-              )
-            )
-          case Feature(_, name, project, conditions, enabled, _, _, description)                           =>
-            (
-              s"""update features
-              |SET name=$$1, enabled=$$2, conditions=$$3, script_config=NULL, description=$$5, project=$$6 WHERE id=$$4 returning id""".stripMargin,
-              List(
-                name,
-                java.lang.Boolean.valueOf(enabled),
-                new JsonArray(Json.toJson(conditions).toString()),
-                id,
-                description,
-                project
-              )
-            )
-          case WasmFeature(_, name, project, enabled, wasmConfig, _, _, description)                       =>
-            (
-              s"""update features
-             |SET name=$$1, enabled=$$2, script_config=$$4, conditions=NULL, description=$$5, project=$$6  WHERE id=$$3 returning id""".stripMargin,
-              List(
-                name,
-                java.lang.Boolean.valueOf(enabled),
-                id,
-                wasmConfig.name,
-                description,
-                project
-              )
-            )
-        }
-
-        (feature match {
-          case feat @ WasmFeature(_, _, _, _, wasmConfig, _, _, _) if wasmConfig.source.kind != WasmSourceKind.Local =>
-            createWasmScriptIfNeeded(tenant, wasmConfig, Some(conn))
-          case _                                                                                                     => Future(())
-        })
-          .flatMap(_ =>
-            env.postgresql.queryRaw(
-              s"""
-               |DELETE FROM feature_contexts_strategies fc USING features f
-               |WHERE fc.feature=f.name
-               |AND fc.project=f.project
-               |AND f.id=$$1
-               |AND f.project != $$2
-               |AND fc.local_context IS NOT NULL
-               |""".stripMargin,
-              List(id, feature.project),
-              conn = Some(conn)
-            ) { _ => Some(()) }
-          )
-          .flatMap(_ =>
-            env.postgresql
-              .queryOne(
-                request,
-                params,
-                conn = Some(conn)
-              ) { row => row.optString("id") }
-              .map(maybeId => maybeId.toRight(InternalServerError()))
-              .recover {
-                case f: PgException if f.getSqlState == NOT_NULL_VIOLATION => Left(MissingFeatureFields())
-                case _                                                     => Left(InternalServerError())
+    findActivationStrategiesForFeature(tenant = tenant, id = id)
+      .map(o => o.map(f => FeatureWithOverloads(f)))
+      .flatMap {
+        case None             => Future.successful(Left(FeatureDoesNotExist(id)))
+        case Some(oldFeature) => {
+          env.postgresql.executeInTransaction(
+            conn => {
+              val (request, params) = feature match {
+                case SingleConditionFeature(id, name, project, conditions, enabled, tags, metadata, description) =>
+                  (
+                    s"""update features
+                       |SET name=$$1, enabled=$$2, conditions=$$3, script_config=NULL, description=$$5, project=$$6 WHERE id=$$4 returning id""".stripMargin,
+                    List(
+                      name,
+                      java.lang.Boolean.valueOf(enabled),
+                      new JsonObject(Json.toJson(conditions).toString()),
+                      id,
+                      description,
+                      project
+                    )
+                  )
+                case Feature(_, name, project, conditions, enabled, _, _, description)                           =>
+                  (
+                    s"""update features
+                       |SET name=$$1, enabled=$$2, conditions=$$3, script_config=NULL, description=$$5, project=$$6 WHERE id=$$4 returning id""".stripMargin,
+                    List(
+                      name,
+                      java.lang.Boolean.valueOf(enabled),
+                      new JsonArray(Json.toJson(conditions).toString()),
+                      id,
+                      description,
+                      project
+                    )
+                  )
+                case WasmFeature(_, name, project, enabled, wasmConfig, _, _, description)                       =>
+                  (
+                    s"""update features
+                       |SET name=$$1, enabled=$$2, script_config=$$4, conditions=NULL, description=$$5, project=$$6  WHERE id=$$3 returning id""".stripMargin,
+                    List(
+                      name,
+                      java.lang.Boolean.valueOf(enabled),
+                      id,
+                      wasmConfig.name,
+                      description,
+                      project
+                    )
+                  )
               }
-              .flatMap(either => {
-                either.fold(
-                  err => Future.successful(Left(err)),
-                  id => {
-                    env.postgresql
-                      .queryOne(
-                        s"""delete from features_tags where feature=$$1""",
-                        List(id),
-                        conn = Some(conn)
-                      ) { _ => Some(id) }
-                      .flatMap(_ =>
-                        insertIntoFeatureTags(tenant, id, feature.tags, Some(conn)).map(either => either.map(_ => id))
-                      )
-                  }
-                )
+
+              (feature match {
+                case feat @ WasmFeature(_, _, _, _, wasmConfig, _, _, _)
+                    if wasmConfig.source.kind != WasmSourceKind.Local =>
+                  createWasmScriptIfNeeded(tenant, wasmConfig, Some(conn))
+                case _ => Future(())
               })
+                .flatMap(_ =>
+                  env.postgresql.queryRaw(
+                    s"""
+                       |DELETE FROM feature_contexts_strategies fc USING features f
+                       |WHERE fc.feature=f.name
+                       |AND fc.project=f.project
+                       |AND f.id=$$1
+                       |AND f.project != $$2
+                       |AND fc.local_context IS NOT NULL
+                       |""".stripMargin,
+                    List(id, feature.project),
+                    conn = Some(conn)
+                  ) { _ => Some(()) }
+                )
+                .flatMap(_ =>
+                  env.postgresql
+                    .queryOne(
+                      request,
+                      params,
+                      conn = Some(conn)
+                    ) { row => row.optString("id") }
+                    .map(maybeId => maybeId.toRight(InternalServerError()))
+                    .recover {
+                      case f: PgException if f.getSqlState == NOT_NULL_VIOLATION => Left(MissingFeatureFields())
+                      case _                                                     => Left(InternalServerError())
+                    }
+                    .flatMap(either => {
+                      either.fold(
+                        err => Future.successful(Left(err)),
+                        id => {
+                          env.postgresql
+                            .queryOne(
+                              s"""delete from features_tags where feature=$$1""",
+                              List(id),
+                              conn = Some(conn)
+                            ) { _ => Some(id) }
+                            .flatMap(_ =>
+                              insertIntoFeatureTags(tenant, id, feature.tags, Some(conn))
+                                .map(either => either.map(_ => id))
+                            )
+                        }
+                      )
+                    })
+                )
+                .flatMap {
+                  case Right(_) if !oldFeature.baseFeature().hasSameActivationStrategy(feature) => // FIXME
+                    env.eventService
+                      .emitEvent(
+                        channel = tenant,
+                        event = SourceFeatureUpdated(
+                          id = id,
+                          project = feature.project,
+                          tenant = tenant,
+                          user = user,
+                          previous = oldFeature,
+                          feature = oldFeature.setFeature(feature)
+                        )
+                      )(conn)
+                      .map(_ => Right(id))
+                  case Right(_)                                                                 => Future.successful(Right(id))
+                  case Left(err)                                                                => Future.successful(Left(err))
+                }
+            },
+            schemas = Set(tenant)
           )
-          .flatMap {
-            case l @ Left(_)   => Future.successful(l)
-            case r @ Right(id) =>
-              env.eventService.emitEvent(
-                channel=tenant,
-                event=SourceFeatureUpdated(id=id, project=feature.project, tenant=tenant, user = user)
-              )(conn)
-              .map(_ => r)
-          }
-      },
-      schemas = Set(tenant)
-    )
+        }
+      }
   }
+
   def insertIntoFeatureTags(
       tenant: String,
       id: String,
@@ -1468,13 +1651,12 @@ class FeaturesDatastore(val env: Env) extends Datastore {
         .flatMap {
           case l @ Left(err)        => Future.successful(Left(err))
           case Right((id, project)) =>
-            env.eventService.emitEvent(
-              channel = tenant,
-              event = SourceFeatureDeleted(id = id, project = project, tenant = tenant, user = user)
-            )(conn)
-            .map(_ =>
-              Right(id)
-            )
+            env.eventService
+              .emitEvent(
+                channel = tenant,
+                event = SourceFeatureDeleted(id = id, project = project, tenant = tenant, user = user)
+              )(conn)
+              .map(_ => Right(id))
         }
     )
   }
