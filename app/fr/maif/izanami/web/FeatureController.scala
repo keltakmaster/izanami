@@ -31,11 +31,11 @@ class FeatureController(
   def testFeature(tenant: String, user: String, date: Instant): Action[JsValue] =
     authenticatedAction.async(parse.json) { implicit request =>
       {
-        Feature.readFeature((request.body.as[JsObject]) + ("name" -> Json.toJson("test")), "") match {
+        Feature.readCompleteFeature((request.body.as[JsObject]) + ("name" -> Json.toJson("test"))) match {
           case JsError(e)            => BadRequest(Json.obj("message" -> "bad body format")).future
           case JsSuccess(feature, _) => {
             val featureToEval = feature match {
-              case w: WasmFeature if w.wasmConfig.source.kind == WasmSourceKind.Local =>
+              case w: CompleteWasmFeature if w.wasmConfig.source.kind == WasmSourceKind.Local =>
                 w.copy(wasmConfig =
                   w.wasmConfig.copy(source = w.wasmConfig.source.copy(path = s"${tenant}/${w.wasmConfig.source.path}"))
                 )
@@ -310,7 +310,7 @@ class FeatureController(
 
   def createFeature(tenant: String, project: String): Action[JsValue] =
     projectAuthAction(tenant, project, RightLevels.Write).async(parse.json) { implicit request =>
-      Feature.readFeature(request.body, project) match {
+      Feature.readCompleteFeature(request.body, project) match {
         case JsError(e)            => BadRequest(Json.obj("message" -> "bad body format")).future
         case JsSuccess(feature, _) => {
           env.datastores.tags
@@ -344,7 +344,7 @@ class FeatureController(
                           case e: TagDoesNotExists => Results.Status(BAD_REQUEST)(Json.toJson(err))
                           case e                   => Results.Status(e.status)(Json.toJson(e))
                         },
-                      feat => Created(Json.toJson(feat)(featureWrite))
+                      (feat: AbstractFeature) => Created(Json.toJson(feat)(featureWrite))
                     )
                 )
             )
@@ -354,7 +354,7 @@ class FeatureController(
 
   def updateFeature(tenant: String, id: String): Action[JsValue] =
     detailledRightForTenanFactory(tenant).async(parse.json) { implicit request =>
-      Feature.readFeature(request.body) match {
+      Feature.readCompleteFeature(request.body) match {
         case JsError(e)            => BadRequest(Json.obj("message" -> "bad body format")).future
         case JsSuccess(feature, _) => {
           env.datastores.tags
@@ -497,7 +497,7 @@ object FeatureController {
 
                     val jsonStrategies = Json.toJson(strategyByCtx.map { case (ctx, feature) => {
                       (ctx.replace("_", "/"), (feature match {
-                        case w: WasmFeature => Feature.featureWrite.writes(w).as[JsObject] - "wasmConfig" - "tags" - "name" - "description" - "id" - "project" ++ Json.obj("wasmConfig" -> Json.obj("name" -> w.wasmConfig.name))
+                        case w: CompleteWasmFeature => Feature.featureWrite.writes(w).as[JsObject] - "wasmConfig" - "tags" - "name" - "description" - "id" - "project" ++ Json.obj("wasmConfig" -> Json.obj("name" -> w.wasmConfig.name))
                         case lf: SingleConditionFeature => Feature.featureWrite.writes(lf.toModernFeature).as[JsObject] - "tags" - "name" - "description" - "id" - "project"
                         case f => Feature.featureWrite.writes(f).as[JsObject]
                       }) - "metadata" - "tags" - "name" - "description" - "id" - "project")

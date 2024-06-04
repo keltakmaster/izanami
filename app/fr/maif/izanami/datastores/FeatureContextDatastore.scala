@@ -23,7 +23,7 @@ import scala.concurrent.Future
 
 class FeatureContextDatastore(val env: Env) extends Datastore {
   def deleteGlobalFeatureContext(tenant: String, path: Seq[String]): Future[Either[IzanamiError, Unit]] = {
-    val ctxName = path.last
+    val ctxName    = path.last
     val parentPart = path.init
     env.postgresql.executeInTransaction(conn => {
       env.postgresql
@@ -39,7 +39,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
         ) { r => Some(()) }
         .map(_.toRight(FeatureContextDoesNotExist(path.mkString("/"))))
         .flatMap {
-          case Left(value) => Left(value).future
+          case Left(value)  => Left(value).future
           case Right(value) =>
             env.postgresql
               .queryRaw(
@@ -53,11 +53,11 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
   }
 
   def createGlobalFeatureContext(
-                                  tenant: String,
-                                  parents: Seq[String],
-                                  featureContext: FeatureContext
-                                ): Future[Either[IzanamiError, FeatureContext]] = {
-    val id = generateSubContextId(tenant, featureContext.name, parents)
+      tenant: String,
+      parents: Seq[String],
+      featureContext: FeatureContext
+  ): Future[Either[IzanamiError, FeatureContext]] = {
+    val id       = generateSubContextId(tenant, featureContext.name, parents)
     val parentId = if (parents.isEmpty) null else generateSubContextId(tenant, parents)
 
     env.postgresql.executeInTransaction(conn => {
@@ -75,7 +75,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
         .map(o => o.toRight(InternalServerError()))
         .flatMap {
           case Left(value) => Left(value).future
-          case Right(ctx) =>
+          case Right(ctx)  =>
             env.postgresql
               .queryOne(
                 s"""
@@ -88,7 +88,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               .recover {
                 case f: PgException if f.getSqlState == UNIQUE_VIOLATION =>
                   Left(ConflictWithSameNameLocalContext(name = featureContext.name, parentCtx = parents.mkString("/")))
-                case _ =>
+                case _                                                   =>
                   Left(InternalServerError())
               }
         }
@@ -98,10 +98,10 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
 
   // TODO merge with createFeatureSubContext ?
   def createFeatureContext(
-                            tenant: String,
-                            project: String,
-                            featureContext: FeatureContext
-                          ): Future[Either[IzanamiError, FeatureContext]] = {
+      tenant: String,
+      project: String,
+      featureContext: FeatureContext
+  ): Future[Either[IzanamiError, FeatureContext]] = {
     val id = generateSubContextId(project, featureContext.name)
     env.postgresql.executeInTransaction(conn => {
       env.postgresql
@@ -118,7 +118,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
         .map(o => o.toRight(InternalServerError()))
         .flatMap {
           case Left(value) => Left(value).future
-          case Right(ctx) => {
+          case Right(ctx)  => {
             env.postgresql
               .queryOne(
                 s"""
@@ -131,7 +131,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               .recover {
                 case f: PgException if f.getSqlState == UNIQUE_VIOLATION =>
                   Left(ConflictWithSameNameGlobalContext(name = featureContext.name))
-                case _ =>
+                case _                                                   =>
                   Left(InternalServerError())
               }
           }
@@ -142,15 +142,15 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
   }
 
   def createFeatureSubContext(
-                               tenant: String,
-                               project: String,
-                               parents: Seq[String],
-                               name: String
-                             ): Future[Either[IzanamiError, FeatureContext]] = {
+      tenant: String,
+      project: String,
+      parents: Seq[String],
+      name: String
+  ): Future[Either[IzanamiError, FeatureContext]] = {
     if (parents.isEmpty) {
       createFeatureContext(tenant, project, FeatureContext(id = null, name, global = true))
     } else {
-      val id = generateSubContextId(project, name, parents)
+      val id      = generateSubContextId(project, name, parents)
       val isLocal = env.postgresql
         .queryOne(
           s"""SELECT id FROM feature_contexts WHERE id=$$1""",
@@ -182,12 +182,12 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               .recover {
                 case f: PgException if f.getSqlState == FOREIGN_KEY_VIOLATION =>
                   Left(FeatureContextDoesNotExist(parents.mkString("/")))
-                case ex =>
+                case ex                                                       =>
                   logger.error("Failed to user", ex)
                   Left(InternalServerError())
               }
               .flatMap {
-                case Left(error) => Left(error).future
+                case Left(error)          => Left(error).future
                 case Right(ctx) if !local => {
                   env.postgresql
                     .queryOne(
@@ -201,11 +201,11 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
                     .recover {
                       case f: PgException if f.getSqlState == UNIQUE_VIOLATION =>
                         Left(ConflictWithSameNameGlobalContext(name = name, parentCtx = parents.mkString("/")))
-                      case _ =>
+                      case _                                                   =>
                         Left(InternalServerError())
                     }
                 }
-                case Right(ctx) => Right(ctx).future
+                case Right(ctx)           => Right(ctx).future
               }
           },
           schemas = Set(tenant)
@@ -215,10 +215,10 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
   }
 
   def readStrategyForContext(
-                              tenant: String,
-                              featureContext: Seq[String],
-                              feature: AbstractFeature
-                            ): Future[Option[ContextualFeatureStrategy]] = {
+      tenant: String,
+      featureContext: Seq[String],
+      feature: AbstractFeature
+  ): Future[Option[CompleteContextualStrategy]] = {
     val possibleContextPaths = featureContext.foldLeft(Seq(): Seq[Seq[String]])((acc, next) => {
       val newElement = acc.lastOption.map(last => last.appended(next)).getOrElse(Seq(next))
       acc.appended(newElement)
@@ -245,9 +245,10 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
          |""".stripMargin,
       List(feature.project, feature.name, possibleContextIds.toArray),
       schemas = Set(tenant)
-    ) { row => {
-      row.optStrategy(feature.name)
-    }
+    ) { row =>
+      {
+        row.optCompleteStrategy(feature.name)
+      }
     }
   }
 
@@ -255,12 +256,11 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
     env.postgresql.queryAll(
       s"""
          |SELECT c.name, c.parent, c.id, NULL as project, COALESCE(
-         |  json_agg(json_build_object('feature', s.feature, 'enabled', s.enabled, 'conditions', s.conditions, 'id', f.id, 'project', f.project, 'description', f.description , 'wasm', w.config)) FILTER (WHERE s.feature IS NOT NULL) , '[]'
+         |  json_agg(json_build_object('feature', s.feature, 'enabled', s.enabled, 'conditions', s.conditions, 'id', f.id, 'project', f.project, 'description', f.description , 'wasm', f.script_config)) FILTER (WHERE s.feature IS NOT NULL) , '[]'
          |) as overloads
          |FROM global_feature_contexts c
          |LEFT JOIN feature_contexts_strategies s ON s.global_context=c.id
          |LEFT JOIN features f ON f.name=s.feature
-         |LEFT JOIN wasm_script_configurations w ON w.id=s.script_config
          |GROUP BY (c.name, c.parent, c.id)
          |""".stripMargin,
       List(),
@@ -280,8 +280,8 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
       schemas = Set(tenant)
     ) { r =>
       for (
-        id <- r.optString("id");
-        name <- r.optString("name");
+        id     <- r.optString("id");
+        name   <- r.optString("name");
         global <- r.optBoolean("global")
       ) yield FeatureContext(id, name, r.optString("parent").orNull, global = global, project = r.optString("project"))
     }
@@ -291,22 +291,20 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
     env.postgresql.queryAll(
       s"""
          |SELECT c.name, COALESCE(c.parent, c.global_parent) as parent, c.id, c.project, COALESCE(
-         |  json_agg(json_build_object('feature', s.feature, 'enabled', s.enabled, 'conditions', s.conditions, 'id', f.id, 'description', f.description, 'project', f.project, 'wasm', w.config)) FILTER (WHERE s.feature IS NOT NULL) , '[]'
+         |  json_agg(json_build_object('feature', s.feature, 'enabled', s.enabled, 'conditions', s.conditions, 'id', f.id, 'description', f.description, 'project', f.project, 'wasm', f.script_config)) FILTER (WHERE s.feature IS NOT NULL) , '[]'
          |) as overloads
          |FROM feature_contexts c
          |LEFT JOIN feature_contexts_strategies s ON s.context=c.id
          |LEFT JOIN features f ON f.name=s.feature
-         |LEFT JOIN wasm_script_configurations w ON w.id=s.script_config
          |WHERE c.project=$$1
          |GROUP BY (c.name, parent, c.id, c.project)
          |UNION ALL
          |SELECT c.name, c.parent, c.id, NULL as project, COALESCE(
-         |  json_agg(json_build_object('feature', s.feature, 'enabled', s.enabled, 'conditions', s.conditions, 'id', f.id, 'description', f.description, 'project', f.project, 'wasm', w.config)) FILTER (WHERE s.feature IS NOT NULL) , '[]'
+         |  json_agg(json_build_object('feature', s.feature, 'enabled', s.enabled, 'conditions', s.conditions, 'id', f.id, 'description', f.description, 'project', f.project, 'wasm', f.script_config)) FILTER (WHERE s.feature IS NOT NULL) , '[]'
          |) as overloads
          |FROM global_feature_contexts c
          |LEFT JOIN feature_contexts_strategies s ON s.global_context=c.id
          |LEFT JOIN features f ON f.name=s.feature
-         |LEFT JOIN wasm_script_configurations w ON w.id=s.script_config
          |GROUP BY (c.name, c.parent, c.id)
          |""".stripMargin,
       List(project),
@@ -315,7 +313,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
   }
 
   def deleteContext(tenant: String, project: String, path: Seq[String]): Future[Either[IzanamiError, Unit]] = {
-    val ctxName = path.last
+    val ctxName    = path.last
     val parentPart = path.init
     env.postgresql.executeInTransaction(conn => {
       env.postgresql
@@ -331,7 +329,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
         ) { r => Some(()) }
         .map(_.toRight(FeatureContextDoesNotExist(path.mkString("/"))))
         .flatMap {
-          case Left(value) => Left(value).future
+          case Left(value)  => Left(value).future
           case Right(value) => {
             env.postgresql
               .queryRaw(
@@ -346,12 +344,12 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
   }
 
   def deleteFeatureStrategy(
-                             tenant: String,
-                             project: String,
-                             path: Seq[String],
-                             feature: String,
-                             user: String
-                           ): Future[Either[IzanamiError, Unit]] = {
+      tenant: String,
+      project: String,
+      path: Seq[String],
+      feature: String,
+      user: String
+  ): Future[Either[IzanamiError, Unit]] = {
     val isLocal = env.postgresql
       .queryOne(
         s"""SELECT id FROM feature_contexts WHERE id=$$1""",
@@ -363,12 +361,13 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
       .map(o => o.fold(false)(_ => true))
     isLocal
       .flatMap(local =>
-        env.datastores.features.findActivationStrategiesForFeatureByName(tenant, feature, project)
+        env.datastores.features
+          .findActivationStrategiesForFeatureByName(tenant, feature, project)
           .map(o => o.toRight(InternalServerError()))
           .map(e => e.map(map => (local, FeatureWithOverloads(map))))
-    )
+      )
       .flatMap {
-        case Left(error) => Left(error).future
+        case Left(error)                          => Left(error).future
         case Right((local, featureWithOverloads)) => {
 
           env.postgresql.executeInTransaction(implicit conn => {
@@ -389,7 +388,7 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
               ) { r => r.optString("id") }
               .map(_.toRight(FeatureOverloadDoesNotExist(project, path.mkString("/"), feature)))
               .flatMap {
-                case Left(err) => Left(err).future
+                case Left(err)  => Left(err).future
                 case Right(fid) => {
                   env.eventService
                     .emitEvent(
@@ -424,13 +423,13 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
   }
 
   def updateFeatureStrategy(
-                             tenant: String,
-                             project: String,
-                             path: Seq[String],
-                             feature: String,
-                             strategy: ContextualFeatureStrategy,
-                             user: String
-                           ): Future[Either[IzanamiError, Unit]] = {
+      tenant: String,
+      project: String,
+      path: Seq[String],
+      feature: String,
+      strategy: CompleteContextualStrategy,
+      user: String
+  ): Future[Either[IzanamiError, Unit]] = {
     // TODO factorize this
     val isLocal = env.postgresql
       .queryOne(
@@ -443,11 +442,12 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
       .map(o => o.fold(false)(_ => true))
     isLocal
       .flatMap(local => {
-        env.datastores.features.findActivationStrategiesForFeatureByName(tenant, feature, project)
+        env.datastores.features
+          .findActivationStrategiesForFeatureByName(tenant, feature, project)
           .map(o => o.toRight(FeatureDoesNotExist(feature)).map(m => (local, FeatureWithOverloads(m))))
       })
       .flatMap {
-        case Left(value) => Left(value).future
+        case Left(value)                => Left(value).future
         case Right((local, oldFeature)) => {
           env.postgresql.executeInTransaction(
             implicit conn => {
@@ -456,10 +456,8 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
                   env.postgresql
                     .queryRaw(
                       s"""
-                         |INSERT INTO feature_contexts_strategies (project, ${
-                        if (local) "local_context"
-                        else "global_context"
-                      }, conditions, enabled, feature) VALUES($$1,$$2,$$3,$$4,$$5)
+                         |INSERT INTO feature_contexts_strategies (project, ${if (local) "local_context"
+                      else "global_context"}, conditions, enabled, feature) VALUES($$1,$$2,$$3,$$4,$$5)
                          |ON CONFLICT(project, context, feature) DO UPDATE
                          |SET conditions=EXCLUDED.conditions, enabled=EXCLUDED.enabled, script_config=NULL
                          |""".stripMargin,
@@ -475,44 +473,41 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
                       conn = Some(conn)
                     ) { _ => Right(oldFeature.id) }
                     .recover {
-                      case f: PgException if f.getSqlState == RELATION_DOES_NOT_EXISTS => Left(TenantDoesNotExists(tenant))
-                      case f: PgException if f.getSqlState == FOREIGN_KEY_VIOLATION =>
+                      case f: PgException if f.getSqlState == RELATION_DOES_NOT_EXISTS =>
+                        Left(TenantDoesNotExists(tenant))
+                      case f: PgException if f.getSqlState == FOREIGN_KEY_VIOLATION    =>
                         Left(FeatureContextDoesNotExist(path.mkString("/")))
-                      case _ => Left(InternalServerError())
+                      case _                                                           => Left(InternalServerError())
                     }
-                case WasmFeatureStrategy(enabled, wasmConfig, feature) => {
-                  val maybeWasmScriptQuery = if (wasmConfig.source.kind != WasmSourceKind.Local) {
-                    env.datastores.features.createWasmScriptIfNeeded(tenant, wasmConfig, Some(conn))
-                  } else {
-                    Right(wasmConfig.name).future
-                  }
-                  maybeWasmScriptQuery
-                    .flatMap {
-                      case Left(err) => Left(err).future
-                      case Right(id) => {
-                        env.postgresql
-                          .queryRaw(
-                            s"""
-                               |INSERT INTO feature_contexts_strategies (project, ${
-                              if (local) "local_context"
-                              else "global_context"
-                            }, script_config, enabled, feature) VALUES($$1,$$2,$$3,$$4,$$5)
+                case f @ (_: CompleteWasmFeatureStrategy)             => {
+                  (f match {
+                    case f: CompleteWasmFeatureStrategy if f.wasmConfig.source.kind != WasmSourceKind.Local =>
+                      env.datastores.features.createWasmScriptIfNeeded(tenant, f.wasmConfig, Some(conn))
+                    case f: CompleteWasmFeatureStrategy                                                     => Right(f.wasmConfig.name).future
+                  }).flatMap {
+                    case Left(err) => Left(err).future
+                    case Right(id) => {
+                      env.postgresql
+                        .queryRaw(
+                          s"""
+                               |INSERT INTO feature_contexts_strategies (project, ${if (local) "local_context"
+                          else "global_context"}, script_config, enabled, feature) VALUES($$1,$$2,$$3,$$4,$$5)
                                |ON CONFLICT(project, context, feature) DO UPDATE
                                |SET script_config=EXCLUDED.script_config, enabled=EXCLUDED.enabled, conditions=NULL
                                |""".stripMargin,
-                            List(
-                              project,
-                              if (local) generateSubContextId(project, path.last, path.dropRight(1))
-                              else generateSubContextId(tenant, path.last, path.dropRight(1)),
-                              id,
-                              java.lang.Boolean.valueOf(enabled),
-                              feature
-                            ),
-                            schemas = Set(tenant),
-                            conn = Some(conn)
-                          ) { _ => Right(id) }
-                      }
+                          List(
+                            project,
+                            if (local) generateSubContextId(project, path.last, path.dropRight(1))
+                            else generateSubContextId(tenant, path.last, path.dropRight(1)),
+                            id,
+                            java.lang.Boolean.valueOf(f.enabled),
+                            feature
+                          ),
+                          schemas = Set(tenant),
+                          conn = Some(conn)
+                        ) { _ => Right(id) }
                     }
+                  }
                 }
               }).flatMap {
                 case Right(fid) =>
@@ -525,10 +520,12 @@ class FeatureContextDatastore(val env: Env) extends Datastore {
                         tenant = tenant,
                         user = user,
                         previous = oldFeature,
-                        feature = oldFeature.updateConditionsForContext(path.mkString("_"), strategy)
-                    ))
+                        feature = oldFeature
+                          .updateConditionsForContext(path.mkString("_"), strategy.toLightWeightContextualStrategy)
+                      )
+                    )
                     .map(_ => Right(()))
-                case Left(err) => Left(err).future
+                case Left(err)  => Left(err).future
               }
             },
             schemas = Set(tenant)
@@ -548,7 +545,7 @@ object FeatureContextDatastore {
         .flatMap(array =>
           array.value.flatMap(jsObject => {
             val maybeConditions   = (jsObject \ "conditions").asOpt[Set[ActivationCondition]]
-            val maybeScriptConfig = (jsObject \ "wasm").asOpt(WasmConfig.format)
+            val maybeScriptConfig = (jsObject \ "wasm").asOpt[String]
 
             for (
               name        <- (jsObject \ "feature").asOpt[String];
@@ -561,12 +558,12 @@ object FeatureContextDatastore {
                 (maybeScriptConfig, maybeConditions) match {
                   case (Some(wasmConfig), _)    =>
                     Some(
-                      WasmFeature(
+                      LightWeightWasmFeature(
                         name = name,
                         enabled = enabled,
                         id = id,
                         project = project,
-                        wasmConfig = wasmConfig,
+                        wasmConfigName = wasmConfig,
                         description = description
                       )
                     )
@@ -599,7 +596,7 @@ object FeatureContextDatastore {
       )
     }
 
-    def optStrategy(feature: String): Option[ContextualFeatureStrategy] = {
+    def optCompleteStrategy(feature: String): Option[CompleteContextualStrategy] = {
       val maybeConditions = row
         .optJsArray("conditions")
         .map(arr => arr.value.map(v => v.as[ActivationCondition]).toSet)
@@ -610,7 +607,24 @@ object FeatureContextDatastore {
         .optBoolean("enabled")
         .map(enabled => {
           (maybeConfig, maybeConditions) match {
-            case (Some(config), _) => WasmFeatureStrategy(enabled, config, feature)
+            case (Some(config), _) => CompleteWasmFeatureStrategy(enabled, config, feature)
+            case (_, conditions)   => ClassicalFeatureStrategy(enabled, conditions, feature)
+          }
+        })
+    }
+
+    def optStrategy(feature: String): Option[ContextualFeatureStrategy] = {
+      val maybeConditions = row
+        .optJsArray("conditions")
+        .map(arr => arr.value.map(v => v.as[ActivationCondition]).toSet)
+        .getOrElse(Set.empty)
+      val maybeConfig     = row.optString("config")
+
+      row
+        .optBoolean("enabled")
+        .map(enabled => {
+          (maybeConfig, maybeConditions) match {
+            case (Some(config), _) => LightWeightWasmFeatureStrategy(enabled, config, feature)
             case (_, conditions)   => ClassicalFeatureStrategy(enabled, conditions, feature)
           }
         })

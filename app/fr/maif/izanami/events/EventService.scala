@@ -6,11 +6,11 @@ import akka.stream.{KillSwitches, Materializer, SharedKillSwitch}
 import fr.maif.izanami.env.Env
 import fr.maif.izanami.env.pgimplicits.{EnhancedRow, VertxFutureEnhancer}
 import fr.maif.izanami.events.EventService.{eventFormat, sourceEventWrites}
-import fr.maif.izanami.models.{AbstractFeature, Feature, FeatureWithOverloads, RequestContext}
+import fr.maif.izanami.models.{AbstractFeature, Feature, FeatureWithOverloads, LightWeightFeature, RequestContext}
 import io.vertx.pgclient.pubsub.PgSubscriber
 import io.vertx.sqlclient.SqlConnection
 import play.api.libs.json.{Format, JsError, JsNumber, JsObject, JsResult, JsSuccess, JsValue, Json, Writes}
-import fr.maif.izanami.models.Feature.featureWrite
+import fr.maif.izanami.models.Feature.{featureWrite, lightweightFeatureWrite}
 import fr.maif.izanami.models.FeatureWithOverloads.featureWithOverloadWrite
 import fr.maif.izanami.utils.syntax.implicits.BetterJsValue
 import fr.maif.izanami.v1.V2FeatureEvents.{createEventV2, deleteEventV2, updateEventV2}
@@ -64,7 +64,7 @@ sealed trait FeatureEvent                                                       
 sealed trait ConditionFeatureEvent                                                                 extends FeatureEvent {
   override val eventId: Long
   override val user: String
-  val conditionByContext: Option[Map[String, AbstractFeature]]
+  val conditionByContext: Option[Map[String, LightWeightFeature]]
 }
 case class FeatureCreated(
     override val eventId: Long,
@@ -72,7 +72,7 @@ case class FeatureCreated(
     project: String,
     tenant: String,
     override val user: String,
-    conditionByContext: Option[Map[String, AbstractFeature]] = None
+    conditionByContext: Option[Map[String, LightWeightFeature]] = None
 )                                                                                                  extends ConditionFeatureEvent
 case class FeatureUpdated(
     override val eventId: Long,
@@ -80,7 +80,7 @@ case class FeatureUpdated(
     project: String,
     tenant: String,
     override val user: String,
-    conditionByContext: Option[Map[String, AbstractFeature]] = None
+    conditionByContext: Option[Map[String, LightWeightFeature]] = None
 )                                                                                                  extends ConditionFeatureEvent
 case class FeatureDeleted(override val eventId: Long, id: String, project: String, tenant: String, override val user: String) extends FeatureEvent
 case class TenantDeleted(override val eventId: Long, tenant: String, override val user: String)                               extends IzanamiEvent
@@ -132,7 +132,7 @@ object EventService {
     case SourceTenantDeleted(tenant, user)                           => Json.obj("tenant" -> tenant, "type" -> "TENANT_DELETED", "user" -> user)
     case SourceTenantCreated(tenant, user)                           => Json.obj("tenant" -> tenant, "type" -> "TENANT_CREATED", "user" -> user)
   }
-  implicit val featureWrites: Writes[AbstractFeature]        = featureWrite
+  implicit val lighweightFeatureWrites: Writes[LightWeightFeature]        = lightweightFeatureWrite
   implicit val eventFormat: Format[IzanamiEvent]             = new Format[IzanamiEvent] {
     override def writes(o: IzanamiEvent): JsValue = {
       o match {
@@ -258,6 +258,7 @@ class EventService(env: Env) {
 
   def emitEvent(channel: String, event: SourceIzanamiEvent)(implicit conn: SqlConnection): Future[Unit] = {
     val global = channel.equalsIgnoreCase("izanami") || event.isInstanceOf[SourceTenantDeleted]
+    val jsonEvent = Json.toJson(event)(sourceEventWrites).as[JsObject]
     env.postgresql
       .queryOne(
         s"""
@@ -267,18 +268,19 @@ class EventService(env: Env) {
          |INSERT INTO  ${if (global) "izanami.global_events" else "events"} (id, event)
          |SELECT gid.next_id as id, (jsonb_build_object('eventId', gid.next_id) || $$1::jsonb) as event
          |FROM generated_id gid
-         |RETURNING event;
+         |RETURNING gid;
          |""".stripMargin,
-        params = List(Json.toJson(event)(sourceEventWrites).vertxJsValue),
+        params = List(jsonEvent.vertxJsValue),
         conn = Some(conn),
         schemas = if (global) Set() else Set(channel)
-      ) { r => r.optJsObject("event") }
+      ) { r => r.optLong("gid").map(id => (id, jsonEvent)) }
       .flatMap {
-        case Some(event) => {
+        case Some((id, jsonEvent)) => {
+          val lightEvent = jsonEvent + ("eventId" -> JsNumber(id)) - "feature"
           env.postgresql
             .queryOne(
               s"""SELECT pg_notify($$1, $$2)""",
-              List(channel, event.toString()),
+              List(channel, lightEvent),
               conn = Some(conn)
             ) { _ => Some(()) }
             .map(_ => ())
