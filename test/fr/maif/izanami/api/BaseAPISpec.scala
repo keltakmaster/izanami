@@ -159,7 +159,7 @@ class BaseAPISpec
 
 object BaseAPISpec extends DefaultAwaitTimeout {
   override implicit def defaultAwaitTimeout: Timeout = 30.seconds
-  val SCHEMA_TO_KEEP                                 = Set("INFORMATION_SCHEMA", "IZANAMI", "PUBLIC")
+  val SCHEMA_TO_KEEP                                 = Set("INFORMATION_SCHEMA", "IZANAMI", "PUBLIC", "PG_CATALOG", "PG_TOAST")
   val BASE_URL                                       = "http://localhost:9000/api"
   val ADMIN_BASE_URL                                 = BASE_URL + "/admin"
   implicit val system                                = ActorSystem()
