@@ -1939,6 +1939,17 @@ object BaseAPISpec extends DefaultAwaitTimeout {
       RequestResult(json = jsonTry, status = response.status)
     }
 
+    def fetchTenantScript(tenant: String, script: String): RequestResult = {
+      val response = await(
+        ws.url(s"${ADMIN_BASE_URL}/tenants/${tenant}/local-scripts/$script").withCookies(cookies: _*).get()
+      )
+
+      val jsonTry = Try {
+        response.json
+      }
+      RequestResult(json = jsonTry, status = response.status)
+    }
+
     def createFeatureWithRawConditions(
         name: String,
         project: String,

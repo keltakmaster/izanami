@@ -11,11 +11,12 @@ import {
   TContext,
   TContextOverload,
   TDayOfWeepPeriod,
-  TFeature,
+  TLightFeature,
   TFeaturePeriod,
   TFeatureRule,
   THourPeriod,
   TLevel,
+  TLightFeature,
   TUser,
   TWasmConfig,
 } from "../utils/types";
@@ -305,7 +306,7 @@ function findContextWithOverloadsForFeature(
 function OperationButton(props: {
   tenant: string;
   bulkOperation: string;
-  selectedRows: TFeature[];
+  selectedRows: TLightFeature[];
   cancel: () => void;
   refresh: () => any;
 }) {
@@ -373,7 +374,7 @@ function OperationButton(props: {
 }
 function OperationTransferForm(props: {
   tenant: string;
-  selectedRows: TFeature[];
+  selectedRows: TLightFeature[];
   cancel: () => void;
   refresh: () => any;
 }) {
@@ -453,7 +454,7 @@ function OperationTransferForm(props: {
 }
 function OperationTagForm(props: {
   tenant: string;
-  selectedRows: TFeature[];
+  selectedRows: TLightFeature[];
   cancel: () => void;
   refresh: () => any;
 }) {
@@ -466,7 +467,7 @@ function OperationTagForm(props: {
   const onSelected = (selectedOptions: Option[]) => {
     setSelectedValues(selectedOptions);
   };
-  const OnSubmit = (selectedRows: TFeature[], values: Option[]) => {
+  const OnSubmit = (selectedRows: TLightFeature[], values: Option[]) => {
     askConfirmation(
       `Are you sure to apply ${values.length} tag${
         selectedRows.length > 1 ? "s" : ""
@@ -538,7 +539,7 @@ function OperationTagForm(props: {
 function TransferForm(props: {
   tenant: string;
   project: string;
-  feature: TFeature;
+  feature: TLightFeature;
   cancel: () => void;
 }) {
   const { project, tenant, feature, cancel } = props;
@@ -607,7 +608,7 @@ function TransferForm(props: {
 function OperationForm(props: {
   tenant: string;
   bulkOperation: string;
-  selectedRows: TFeature[];
+  selectedRows: TLightFeature[];
   cancel: () => void;
   refresh: () => any;
 }) {
@@ -692,7 +693,7 @@ export function CopyButton(props: { value: any; title?: any }) {
 function FeatureUrl(props: {
   context?: string;
   tenant: string;
-  feature: TFeature;
+  feature: TLightFeature;
 }) {
   const { project } = props.feature;
   const { tenant, context, feature } = props;
@@ -775,7 +776,10 @@ function FeatureUrl(props: {
     return <Loader message="Loading..." />;
   }
 }
-function OverloadTableForFeature(props: { tenant: string; feature: TFeature }) {
+function OverloadTableForFeature(props: {
+  tenant: string;
+  feature: TLightFeature;
+}) {
   const { project, name } = props.feature;
   const { tenant } = props;
   const contextQuery = useQuery(projectContextKey(tenant!, project!), () =>
@@ -804,7 +808,10 @@ function OverloadTableForFeature(props: { tenant: string; feature: TFeature }) {
   }
 }
 
-function OverloadDetails(props: { feature: TFeature; cancel: () => void }) {
+function OverloadDetails(props: {
+  feature: TLightFeature;
+  cancel: () => void;
+}) {
   const [creating, setCreating] = useState(false);
   const { tenant } = useParams();
   const { feature, cancel } = props;
@@ -912,7 +919,7 @@ function OverloadDetails(props: { feature: TFeature; cancel: () => void }) {
   }
 }
 function ExistingFeatureTestForm(props: {
-  feature: TFeature | TContextOverload;
+  feature: TLightFeature | TContextOverload;
   cancel?: () => any;
   context?: string;
 }) {

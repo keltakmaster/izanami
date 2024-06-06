@@ -1,6 +1,9 @@
 import { format } from "date-fns";
 import {
   Configuration,
+  isClassicalFeature,
+  isLightWasmFeature,
+  isSingleConditionFeature,
   IzanamiV1ImportRequest,
   LightWebhook,
   Mailer,
@@ -8,6 +11,7 @@ import {
   ProjectInCreationType,
   ProjectType,
   TagType,
+  TCompleteFeature,
   TCondition,
   TContext,
   TenantInCreationType,
@@ -15,6 +19,7 @@ import {
   TFeature,
   TKey,
   TLevel,
+  TLightFeature,
   TRights,
   TSingleRightForTenantUser,
   TTenantRight,
@@ -452,9 +457,23 @@ export function createFeature(
   );
 }
 
+export function toCompleteFeature(
+  feature: TLightFeature
+): Promise<TCompleteFeature> {
+  if (isSingleConditionFeature(feature)) {
+    return Promise.resolve(feature);
+  } else if (isLightWasmFeature(feature)) {
+    return;
+  } else if (isClassicalFeature(feature)) {
+    return Promise.resolve(feature);
+  }
+}
+
+function fetchWasmConfig() {}
+
 export function testFeature(
   tenant: string,
-  feature: TFeature,
+  feature: TCompleteFeature,
   user: string,
   date: Date,
   context?: string

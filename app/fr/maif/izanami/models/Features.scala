@@ -2,7 +2,13 @@ package fr.maif.izanami.models
 
 import fr.maif.izanami.env.Env
 import fr.maif.izanami.errors.{InternalServerError, IzanamiError}
-import fr.maif.izanami.models.Feature.{featureRead, featureWrite, lightweightFeatureRead, lightweightFeatureWrite, readFeature}
+import fr.maif.izanami.models.Feature.{
+  featureRead,
+  featureWrite,
+  lightweightFeatureRead,
+  lightweightFeatureWrite,
+  readFeature
+}
 import fr.maif.izanami.utils.syntax.implicits.{BetterJsValue, BetterSyntax}
 import fr.maif.izanami.v1.{OldFeature, OldGlobalScriptFeature, OldScript}
 import fr.maif.izanami.v1.OldFeature.{oldFeatureReads, oldFeatureWrites}
@@ -852,7 +858,7 @@ object Feature {
 
   val lightweightFeatureRead: Reads[LightWeightFeature] = json => {
     readFeature(json).flatMap {
-      case feature: CompleteFeature => JsError("CompleteFeature can't be read as LightWeightFeature")
+      case feature: CompleteFeature    => JsError("CompleteFeature can't be read as LightWeightFeature")
       case feature: LightWeightFeature => JsSuccess(feature)
     }
   }
@@ -1134,6 +1140,16 @@ object Feature {
       case LightWeightWasmFeature(id, name, project, enabled, wasmConfigName, tags, metadata, description) =>
         JsError("LightWeightWasmFeature can't be evaluated")
       case f: CompleteWasmFeature                                                                          => JsSuccess(f)
+    }
+  }
+
+  def readLightWeightFeature(json: JsValue, project: String = null): JsResult[LightWeightFeature] = {
+    readFeature(json, project).flatMap {
+      case f: SingleConditionFeature                                                                    => JsSuccess(f)
+      case f: Feature                                                                                   => JsSuccess(f)
+      case CompleteWasmFeature(id, name, project, enabled, wasmConfigName, tags, metadata, description) =>
+        JsError("Expected light feature, got complete")
+      case f: LightWeightWasmFeature                                                                    => JsSuccess(f)
     }
   }
 }

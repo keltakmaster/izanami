@@ -85,6 +85,7 @@ PUT           /api/admin/configuration/mailer/:id                               
 
 GET           /api/admin/plugins                                                                   fr.maif.izanami.web.PluginController.wasmFiles()
 GET           /api/admin/tenants/:tenant/local-scripts                                             fr.maif.izanami.web.PluginController.localScripts(tenant: String, features: Boolean ?= false)
+GET           /api/admin/tenants/:tenant/local-scripts/:script                                     fr.maif.izanami.web.PluginController.readScript(tenant: String, script: String)
 PUT           /api/admin/tenants/:tenant/local-scripts/:script                                     fr.maif.izanami.web.PluginController.updateScript(tenant: String, script: String)
 DELETE        /api/admin/local-scripts/_cache                                                      fr.maif.izanami.web.PluginController.clearWasmCache()
 DELETE        /api/admin/tenants/:tenant/local-scripts/:script                                     fr.maif.izanami.web.PluginController.deleteScript(tenant: String, script: String)

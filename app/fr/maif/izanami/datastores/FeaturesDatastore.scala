@@ -111,10 +111,10 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                             (json \ "enabled")
                               .asOpt[Boolean]
                               .map(enabled => {
-                                val maybeConditions              = (json \ "conditions")
+                                val maybeConditions                 = (json \ "conditions")
                                   .asOpt[JsArray]
                                   .map(arr => arr.value.map(v => v.as[ActivationCondition]).toSet)
-                                val maybeScriptName              = (json \ "config").asOpt[String]
+                                val maybeScriptName                 = (json \ "config").asOpt[String]
                                 val r: (String, LightWeightFeature) = (
                                   context,
                                   maybeConditions
@@ -211,10 +211,10 @@ class FeaturesDatastore(val env: Env) extends Datastore {
                         (json \ "enabled")
                           .asOpt[Boolean]
                           .map(enabled => {
-                            val maybeConditions              = (json \ "conditions")
+                            val maybeConditions                 = (json \ "conditions")
                               .asOpt[JsArray]
                               .map(arr => arr.value.map(v => v.as[ActivationCondition]).toSet)
-                            val maybeScriptName              = (json \ "config").asOpt[String]
+                            val maybeScriptName                 = (json \ "config").asOpt[String]
                             val r: (String, LightWeightFeature) = (
                               context,
                               maybeConditions
@@ -1316,7 +1316,7 @@ class FeaturesDatastore(val env: Env) extends Datastore {
          |WHERE id=$$1
          |""".stripMargin,
       List(name),
-      schemas = Set(name)
+      schemas = Set(tenant)
     ) { r => r.optJsObject("config").map(js => js.as(WasmConfig.format)) }
   }
 
