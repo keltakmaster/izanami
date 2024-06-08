@@ -165,7 +165,7 @@ function LoginForm(props: { req?: string }) {
                   className="btn btn-secondary"
                   onClick={() => {
                     window.location.href =
-                      "http://localhost:9000/api/admin/openid-connect";
+                      "https://izanami.homelab.home/api/admin/openid-connect";
                   }}
                 >
                   OpenId connect
